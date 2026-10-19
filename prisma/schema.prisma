@@ -1,0 +1,249 @@
+// Prisma 7: the connection URL lives in prisma.config.ts, and the client is
+// generated into src/generated/prisma (gitignored; rebuilt on postinstall).
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// === Auth (NextAuth Prisma adapter) ===
+model User {
+  id            String            @id @default(cuid())
+  name          String?
+  email         String?           @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  projects      ResearchProject[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// === Research ===
+model ResearchProject {
+  id         String         @id @default(cuid())
+  title      String // auto-generated from query
+  query      String         @db.Text // the user's research question
+  depth      ResearchDepth  @default(STANDARD)
+  focusAreas String[] // optional focus areas from the new-research form
+  status     ProjectStatus  @default(CREATED)
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runs       AgentRun[]
+  findings   Finding[]
+  reviews    CriticReview[]
+  redirects  Redirect[]
+  report     Report?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([userId])
+}
+
+enum ResearchDepth {
+  QUICK // 5-10 searches, surface level
+  STANDARD // 15-25 searches, good coverage
+  DEEP // 30-50 searches, thorough investigation
+}
+
+enum ProjectStatus {
+  CREATED
+  QUEUED // job enqueued, waiting for a worker
+  PLANNING // agent is creating research plan
+  RESEARCHING // agent is actively searching & reading
+  REVIEWING // critic agent is reviewing findings
+  WRITING // writer agent is generating report
+  PAUSED // user paused; checkpoint saved, no job running
+  COMPLETED
+  STOPPED // user stopped it
+  ERROR
+}
+
+// A single execution run of one agent (researcher round, critic review, or writer)
+model AgentRun {
+  id                    String          @id @default(cuid())
+  projectId             String
+  project               ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  status                RunStatus       @default(RUNNING)
+  agentRole             AgentRole       @default(RESEARCHER)
+  round                 Int             @default(1) // researcher round (1 = initial, 2+ = gap filling)
+  model                 String // e.g. "claude-sonnet-5-5" — needed for cost math
+  jobId                 String? // BullMQ job id
+  steps                 AgentStep[]
+  // Checkpoint (Phase 10/11): enough to resume after pause or crash
+  messages              Json? // the append-only conversation for this run
+  memory                Json? // serialized AgentMemory
+  // Token tracking
+  totalInputTokens      Int             @default(0) // uncached input
+  totalOutputTokens     Int             @default(0) // includes thinking tokens
+  totalCacheReadTokens  Int             @default(0)
+  totalCacheWriteTokens Int             @default(0)
+  costUsd               Float           @default(0)
+  totalSearches         Int             @default(0)
+  totalPagesRead        Int             @default(0)
+  // Timing
+  startedAt             DateTime        @default(now())
+  completedAt           DateTime?
+  // Why it ended: "agent_done", "max_steps", "budget", "timeout", "user_stop", "refusal", ...
+  endReason             String?
+  error                 String?         @db.Text
+
+  @@index([projectId])
+}
+
+enum RunStatus {
+  RUNNING
+  PAUSED // user paused
+  COMPLETED
+  STOPPED // user stopped
+  ERROR
+}
+
+enum AgentRole {
+  RESEARCHER
+  CRITIC
+  WRITER
+  ORCHESTRATOR
+}
+
+// Each individual action the agent takes
+model AgentStep {
+  id           String     @id @default(cuid())
+  runId        String
+  run          AgentRun   @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepNumber   Int // sequential order
+  type         StepType
+  // What the agent was thinking
+  reasoning    String?    @db.Text // the agent's internal reasoning
+  // What action it took
+  toolName     String? // which tool was called
+  toolInput    Json? // tool input parameters
+  toolResult   Json? // what the tool returned
+  // Metadata
+  duration     Int? // milliseconds this step took
+  inputTokens  Int?
+  outputTokens Int?
+  status       StepStatus @default(RUNNING)
+  error        String?    @db.Text
+  createdAt    DateTime   @default(now())
+
+  @@index([runId])
+}
+
+enum StepType {
+  THINK // pure reasoning, no tool call
+  SEARCH // web search
+  READ // read a web page
+  NOTE // save a finding
+  PLAN // create/update research plan
+  EVALUATE // assess progress, decide next step
+  REDIRECT // human intervened with new direction
+  REVIEW // critic review
+  WRITE // writer generated the report
+}
+
+enum StepStatus {
+  RUNNING
+  COMPLETED
+  ERROR
+  SKIPPED
+}
+
+// Structured findings accumulated during research
+model Finding {
+  id          String          @id @default(cuid())
+  projectId   String
+  project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String // short summary
+  content     String          @db.Text // detailed finding
+  sourceUrl   String? // where this came from
+  sourceTitle String? // title of the source page
+  relevance   Float? // 0-1, how relevant to the query
+  category    String? // agent-assigned category
+  createdAt   DateTime        @default(now())
+
+  @@index([projectId])
+}
+
+// Critic output, one per review round
+model CriticReview {
+  id                String          @id @default(cuid())
+  projectId         String
+  project           ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runId             String?
+  round             Int
+  qualityScore      Float
+  approved          Boolean
+  gaps              String[]
+  suggestedSearches String[]
+  biasConcerns      String?         @db.Text
+  reason            String          @db.Text
+  createdAt         DateTime        @default(now())
+
+  @@index([projectId])
+}
+
+// Human instructions sent mid-run (shown in the redirect history)
+model Redirect {
+  id          String          @id @default(cuid())
+  projectId   String
+  project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  instruction String          @db.Text
+  appliedAt   DateTime? // set when the agent loop picks it up
+  createdAt   DateTime        @default(now())
+
+  @@index([projectId])
+}
+
+// The final synthesized report (regenerating overwrites it)
+model Report {
+  id          String          @id @default(cuid())
+  projectId   String          @unique
+  project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  summary     String          @db.Text // executive summary
+  content     String          @db.Text // full report in markdown
+  sections    Json // structured sections array
+  sourceCount Int             @default(0)
+  wordCount   Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
