@@ -4,6 +4,7 @@ import type { Adapter } from "next-auth/adapters";
 import GitHubProvider from "next-auth/providers/github";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
+import { cache } from "react";
 import { prisma } from "@/lib/db/prisma";
 
 export const authOptions: NextAuthOptions = {
@@ -28,12 +29,13 @@ export const authOptions: NextAuthOptions = {
   },
 };
 
-export async function getSession() {
+// cache(): layout, header and page all ask for the session; decode it once per request.
+export const getSession = cache(async () => {
   // next-auth generates a CSRF token (crypto.randomBytes) inside getServerSession;
   // under cacheComponents that must be explicitly request-time, not prerendered.
   await connection();
   return getServerSession(authOptions);
-}
+});
 
 /** For server components: the signed-in user, or a redirect to /login. */
 export async function requireUser() {
