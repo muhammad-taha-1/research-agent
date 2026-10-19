@@ -22,13 +22,32 @@
 
 # misc
 .DS_Store
+Thumbs.db
+desktop.ini
 *.pem
+*.key
 
-# debug
+# editors
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# debug / logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+
+# prisma — generated client (if output is set inside the repo) and local SQLite files
+/src/generated/
+/prisma/*.db
+/prisma/*.db-journal
+
+# local scratch: agent test runs, exported reports
+/tmp/
+/scripts/output/
 
 # env files (can opt-in for committing if needed)
 .env*
