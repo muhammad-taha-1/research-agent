@@ -1,6 +1,6 @@
-import type { Prisma } from "@/generated/prisma/client";
+import type { Finding, Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import type { ProjectDetail, ProjectSummary } from "@/types/research";
+import type { FindingView, ProjectDetail, ProjectSummary } from "@/types/research";
 
 // Every query is scoped to the owner: a project that belongs to someone else
 // is indistinguishable from one that doesn't exist (callers respond 404).
@@ -88,16 +88,7 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
         createdAt: s.createdAt.toISOString(),
       })),
     ),
-    findings: project.findings.map((f) => ({
-      id: f.id,
-      title: f.title,
-      content: f.content,
-      sourceUrl: f.sourceUrl,
-      sourceTitle: f.sourceTitle,
-      relevance: f.relevance,
-      category: f.category,
-      createdAt: f.createdAt.toISOString(),
-    })),
+    findings: project.findings.map(toFindingView),
     redirects: project.redirects.map((r) => ({
       id: r.id,
       instruction: r.instruction,
@@ -125,5 +116,19 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
       },
     ),
     hasReport: project.report !== null,
+  };
+}
+
+/** The UI shape of a finding; also what save_finding returns and the `finding` event carries. */
+export function toFindingView(f: Finding): FindingView {
+  return {
+    id: f.id,
+    title: f.title,
+    content: f.content,
+    sourceUrl: f.sourceUrl,
+    sourceTitle: f.sourceTitle,
+    relevance: f.relevance,
+    category: f.category,
+    createdAt: f.createdAt.toISOString(),
   };
 }
