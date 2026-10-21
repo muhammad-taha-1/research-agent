@@ -1,6 +1,13 @@
-import type { Finding, Prisma } from "@/generated/prisma/client";
+import type { AgentRun, AgentStep, Finding, Prisma } from "@/generated/prisma/client";
+import type { AgentRole } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/db/prisma";
-import type { FindingView, ProjectDetail, ProjectSummary } from "@/types/research";
+import type {
+  AgentStepView,
+  FindingView,
+  ProjectDetail,
+  ProjectSummary,
+  UsageView,
+} from "@/types/research";
 
 // Every query is scoped to the owner: a project that belongs to someone else
 // is indistinguishable from one that doesn't exist (callers respond 404).
@@ -69,25 +76,7 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
     startedAt: runs[0]?.startedAt.toISOString() ?? null,
     endedAt: !anyRunning && lastRun?.completedAt ? lastRun.completedAt.toISOString() : null,
     // All runs in order (researcher rounds, critic, writer), so the timeline reads as one story
-    steps: runs.flatMap((run) =>
-      run.steps.map((s) => ({
-        id: s.id,
-        runId: s.runId,
-        agentRole: run.agentRole,
-        stepNumber: s.stepNumber,
-        type: s.type,
-        reasoning: s.reasoning,
-        toolName: s.toolName,
-        toolInput: s.toolInput,
-        toolResult: s.toolResult,
-        duration: s.duration,
-        inputTokens: s.inputTokens,
-        outputTokens: s.outputTokens,
-        status: s.status,
-        error: s.error,
-        createdAt: s.createdAt.toISOString(),
-      })),
-    ),
+    steps: runs.flatMap((run) => run.steps.map((s) => toStepView(s, run.agentRole))),
     findings: project.findings.map(toFindingView),
     redirects: project.redirects.map((r) => ({
       id: r.id,
@@ -116,6 +105,40 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
       },
     ),
     hasReport: project.report !== null,
+  };
+}
+
+/** The UI shape of a step; also what the `step_complete` event carries. */
+export function toStepView(s: AgentStep, agentRole: AgentRole): AgentStepView {
+  return {
+    id: s.id,
+    runId: s.runId,
+    agentRole,
+    stepNumber: s.stepNumber,
+    type: s.type,
+    reasoning: s.reasoning,
+    toolName: s.toolName,
+    toolInput: s.toolInput,
+    toolResult: s.toolResult,
+    duration: s.duration,
+    inputTokens: s.inputTokens,
+    outputTokens: s.outputTokens,
+    status: s.status,
+    error: s.error,
+    createdAt: s.createdAt.toISOString(),
+  };
+}
+
+/** Run totals in the UI's usage shape; the `usage` event carries one per run. */
+export function toUsageView(r: AgentRun): UsageView {
+  return {
+    inputTokens: r.totalInputTokens,
+    outputTokens: r.totalOutputTokens,
+    cacheReadTokens: r.totalCacheReadTokens,
+    cacheWriteTokens: r.totalCacheWriteTokens,
+    costUsd: r.costUsd,
+    searches: r.totalSearches,
+    pagesRead: r.totalPagesRead,
   };
 }
 
