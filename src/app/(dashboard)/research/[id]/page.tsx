@@ -4,6 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ResearchView } from "@/components/research/ResearchView";
 import { requireUser } from "@/lib/auth";
 import { getProjectDetail } from "@/lib/research/queries";
+import { latestEventId } from "@/lib/stream/events";
 
 export default function ResearchPage({ params }: PageProps<"/research/[id]">) {
   return (
@@ -16,10 +17,14 @@ export default function ResearchPage({ params }: PageProps<"/research/[id]">) {
 async function Research({ params }: Pick<PageProps<"/research/[id]">, "params">) {
   const user = await requireUser();
   const { id } = await params;
+  // Note the stream position BEFORE reading the database: the live view streams
+  // from here, so no event between the two reads is lost.
+  const loadedAt = new Date().toISOString();
+  const cursor = await latestEventId(id).catch(() => "0"); // Redis down: the page still renders
   // Someone else's project 404s exactly like a missing one
   const project = await getProjectDetail(id, user.id);
   if (!project) notFound();
-  return <ResearchView project={project} />;
+  return <ResearchView project={project} position={{ cursor, loadedAt }} />;
 }
 
 function ResearchViewSkeleton() {

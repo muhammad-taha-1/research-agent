@@ -80,6 +80,13 @@ export interface ProjectDetail {
   steps: AgentStepView[];
   findings: FindingView[];
   redirects: RedirectView[];
-  usage: UsageView;
+  usage: UsageView; // all runs together
+  runUsage: Record<string, UsageView>; // by run id: a `usage` event replaces one entry
   hasReport: boolean;
+}
+
+/** Where the page's database snapshot sits in the event stream; the live view starts there. */
+export interface StreamPosition {
+  cursor: string; // newest stream ID before the snapshot was read ("0" for none)
+  loadedAt: string; // ISO time the snapshot was read; older events are already in it
 }

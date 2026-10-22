@@ -88,3 +88,27 @@ export function summarizeStep(step: AgentStepView): string {
       return step.reasoning ? firstLine(step.reasoning) : "Thinking";
   }
 }
+
+/** One line for a tool call that's still running: what the agent is doing right now. */
+export function describeToolCall(tool: string, input: unknown): string {
+  switch (tool) {
+    case "web_search": {
+      const query = str(field(input, "query"));
+      return query ? `Searching “${query}”` : "Searching the web";
+    }
+    case "read_webpage": {
+      const url = str(field(input, "url"));
+      return url ? `Reading ${hostname(url)}` : "Reading a page";
+    }
+    case "save_finding": {
+      const title = str(field(input, "title"));
+      return title ? `Saving: ${title}` : "Saving a finding";
+    }
+    case "update_plan":
+      return "Updating the research plan";
+    case "evaluate_progress":
+      return "Evaluating progress";
+    default:
+      return `Running ${tool}`;
+  }
+}

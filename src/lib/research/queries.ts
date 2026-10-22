@@ -1,6 +1,7 @@
 import type { AgentRun, AgentStep, Finding, Prisma } from "@/generated/prisma/client";
 import type { AgentRole } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/db/prisma";
+import { sumUsage } from "./usage";
 import type {
   AgentStepView,
   FindingView,
@@ -84,26 +85,8 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
       appliedAt: r.appliedAt?.toISOString() ?? null,
       createdAt: r.createdAt.toISOString(),
     })),
-    usage: runs.reduce(
-      (u, r) => ({
-        inputTokens: u.inputTokens + r.totalInputTokens,
-        outputTokens: u.outputTokens + r.totalOutputTokens,
-        cacheReadTokens: u.cacheReadTokens + r.totalCacheReadTokens,
-        cacheWriteTokens: u.cacheWriteTokens + r.totalCacheWriteTokens,
-        costUsd: u.costUsd + r.costUsd,
-        searches: u.searches + r.totalSearches,
-        pagesRead: u.pagesRead + r.totalPagesRead,
-      }),
-      {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        costUsd: 0,
-        searches: 0,
-        pagesRead: 0,
-      },
-    ),
+    usage: sumUsage(runs.map(toUsageView)),
+    runUsage: Object.fromEntries(runs.map((r) => [r.id, toUsageView(r)])),
     hasReport: project.report !== null,
   };
 }

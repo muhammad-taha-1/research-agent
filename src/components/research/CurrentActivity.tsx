@@ -2,16 +2,18 @@ import { Check, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProjectStatus } from "@/generated/prisma/enums";
 import { PIPELINE, STATUS_META } from "@/lib/research/status";
-import { STEP_META, field, summarizeStep } from "@/lib/research/steps";
+import { STEP_META, describeToolCall, field, summarizeStep } from "@/lib/research/steps";
+import type { LiveActivity } from "@/hooks/useResearchStream";
 import type { AgentStepView } from "@/types/research";
 import { Panel } from "./Panel";
 
 interface Props {
   status: ProjectStatus;
   steps: AgentStepView[];
+  activity: LiveActivity; // between saved steps: thinking, or tool calls still running
 }
 
-export function CurrentActivity({ status, steps }: Props) {
+export function CurrentActivity({ status, steps, activity }: Props) {
   const meta = STATUS_META[status];
   const latest = steps.at(-1);
   const stage = currentStage(status, steps);
@@ -28,13 +30,19 @@ export function CurrentActivity({ status, steps }: Props) {
             </span>
             <p className="text-lg font-medium">{meta.activity}</p>
           </div>
-          {latest && (
-            <div className="flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm">
-              <span className="shrink-0 font-mono text-[11px] tracking-wider text-muted-foreground uppercase">
-                {meta.live ? "Now" : "Last"} · {STEP_META[latest.type].label}
-              </span>
-              <span className="min-w-0 break-words">{summarizeStep(latest)}</span>
-            </div>
+          {meta.live && activity.kind === "thinking" ? (
+            <NowLine label="Now · Think" text="Deciding the next step…" />
+          ) : meta.live && activity.kind === "tools" ? (
+            activity.calls.map((c) => (
+              <NowLine key={c.stepNumber} label="Now" text={describeToolCall(c.tool, c.input)} />
+            ))
+          ) : (
+            latest && (
+              <NowLine
+                label={`${meta.live ? "Now" : "Last"} · ${STEP_META[latest.type].label}`}
+                text={summarizeStep(latest)}
+              />
+            )
           )}
         </div>
 
@@ -76,6 +84,15 @@ export function CurrentActivity({ status, steps }: Props) {
         )}
       </div>
     </Panel>
+  );
+}
+
+function NowLine({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm">
+      <span className="shrink-0 font-mono text-[11px] tracking-wider text-muted-foreground uppercase">{label}</span>
+      <span className="min-w-0 break-words">{text}</span>
+    </div>
   );
 }
 

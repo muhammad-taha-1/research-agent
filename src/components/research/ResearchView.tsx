@@ -4,10 +4,11 @@ import Link from "next/link";
 import { Activity, ArrowLeft, Bookmark, Clock, Footprints, Radar } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNow } from "@/hooks/useNow";
+import { useResearchStream, type StreamConnection } from "@/hooks/useResearchStream";
 import { formatDuration } from "@/lib/format";
 import { DEPTH_OPTIONS } from "@/lib/research/config";
 import { STATUS_META } from "@/lib/research/status";
-import type { ProjectDetail } from "@/types/research";
+import type { ProjectDetail, StreamPosition } from "@/types/research";
 import { AgentControls } from "./AgentControls";
 import { CostTracker } from "./CostTracker";
 import { CurrentActivity } from "./CurrentActivity";
@@ -15,13 +16,14 @@ import { FindingsPanel } from "./FindingsPanel";
 import { ResearchTimeline } from "./ResearchTimeline";
 import { StatusBadge } from "./StatusBadge";
 
-// Renders whatever project state it's given. Phase 9 feeds it live updates from
-// the SSE stream; until then it shows the server snapshot (refreshed after actions).
-export function ResearchView({ project }: { project: ProjectDetail }) {
+// The server snapshot, kept current by the live event stream (and re-fetched with
+// router.refresh() after actions and when a run ends).
+export function ResearchView({ project: snapshot, position }: { project: ProjectDetail; position: StreamPosition }) {
+  const { project, activity: liveActivity, connection } = useResearchStream(snapshot, position);
   const live = STATUS_META[project.status].live;
 
   const timeline = <ResearchTimeline steps={project.steps} live={live} />;
-  const activity = <CurrentActivity status={project.status} steps={project.steps} />;
+  const activity = <CurrentActivity status={project.status} steps={project.steps} activity={liveActivity} />;
   const findings = <FindingsPanel findings={project.findings} />;
 
   return (
@@ -39,6 +41,7 @@ export function ResearchView({ project }: { project: ProjectDetail }) {
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-xl font-semibold tracking-tight">{project.title}</h1>
               <StatusBadge status={project.status} />
+              {live && <ConnectionIndicator connection={connection} />}
             </div>
             <p className="max-w-3xl text-sm text-muted-foreground">{project.query}</p>
             {project.focusAreas.length > 0 && (
@@ -102,6 +105,24 @@ export function ResearchView({ project }: { project: ProjectDetail }) {
         <TabsContent value="findings" className="flex h-[70svh] flex-col">{findings}</TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+const CONNECTION_META: Record<StreamConnection, { label: string; dot: string }> = {
+  connecting: { label: "Connecting…", dot: "bg-muted-foreground" },
+  live: { label: "Live", dot: "bg-emerald-400" },
+  reconnecting: { label: "Reconnecting…", dot: "bg-amber-300" },
+  off: { label: "Offline", dot: "bg-muted-foreground" },
+};
+
+/** Whether updates are arriving. State in words, not just a colored dot. */
+function ConnectionIndicator({ connection }: { connection: StreamConnection }) {
+  const meta = CONNECTION_META[connection];
+  return (
+    <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground" role="status">
+      <span className={`size-1.5 rounded-full ${meta.dot}`} />
+      {meta.label}
+    </span>
   );
 }
 
