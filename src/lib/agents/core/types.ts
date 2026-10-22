@@ -48,6 +48,8 @@ export interface AgentConfig {
   maxTokensPerStep: number; // max_tokens per model call; thinking counts toward it
   maxCostUsd: number;
   maxDurationMs: number;
+  // evaluate_progress can't end the run before this much work is done (limits still can)
+  minimumWork?: { searches: number; pagesRead: number };
 }
 
 export interface AgentState {

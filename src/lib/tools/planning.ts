@@ -94,7 +94,7 @@ export const evaluateProgressTool = defineTool({
       ...evaluation,
       next: evaluation.should_continue
         ? "Continue researching the remaining items and gaps."
-        : "Research marked complete. Finish with a brief summary of what was found.",
+        : "Research marked complete.",
     });
   },
 });

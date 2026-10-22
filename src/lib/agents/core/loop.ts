@@ -193,7 +193,7 @@ async function runToolCall(
   const started = Date.now();
   await emit(event("tool_call", { stepNumber, tool: call.name, input: call.input }));
 
-  const result: ToolResult =
+  let result: ToolResult =
     state.memory.checkDuplicate(call.name, call.input) ??
     (await tools.execute(call.name, call.input, {
       projectId: state.projectId,
@@ -207,7 +207,12 @@ async function runToolCall(
     result.success &&
     (call.input as { should_continue?: boolean }).should_continue === false
   ) {
-    state.doneRequested = true;
+    const missing = missingWork(ctx);
+    if (missing) {
+      result = { ...result, data: { ...(result.data as object), stop_refused: true, next: missing } };
+    } else {
+      state.doneRequested = true;
+    }
   }
 
   await saveAndEmitStep(ctx, {
@@ -229,6 +234,19 @@ async function runToolCall(
     content: JSON.stringify(result.success ? result.data : { error: result.error }),
     is_error: !result.success,
   };
+}
+
+/** Why the agent can't stop yet, or null once its minimum work is done. */
+function missingWork({ config, state }: RunContext): string | null {
+  const min = config.minimumWork;
+  if (!min) return null;
+  const { searchCount, pagesRead } = state.memory;
+  if (searchCount >= min.searches && pagesRead >= min.pagesRead) return null;
+  return (
+    `Not done yet: this depth needs at least ${min.searches} searches and ${min.pagesRead} page reads, ` +
+    `and you've done ${searchCount} and ${pagesRead}. Keep researching: fill your plan's gaps and ` +
+    `cross-check key claims against more sources.`
+  );
 }
 
 /** Strips undefined and anything else JSON can't hold, so Prisma accepts it. */

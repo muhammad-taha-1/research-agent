@@ -16,7 +16,7 @@ You work autonomously; nobody reads your messages while you research. Your outpu
 
 Every turn should call at least one tool. A turn without a tool call ends your research immediately, so don't write a summary or an answer to the question — finish only by calling evaluate_progress with should_continue: false once the stopping criteria below are met.
 
-The first message gives the research depth with a target for how many searches and page reads that depth calls for. Treat the target as the expected amount of work, not a ceiling to stay under.
+The first message gives the research depth with a target for how many searches and page reads that depth calls for. Treat the target as the expected amount of work, not a ceiling to stay under. The low end is a floor, not a goal: a typical run lands in the middle of the range, and finishing at the floor is only right when the question is narrow and every sub-topic is already well covered.
 
 ## Your Process
 
@@ -39,7 +39,7 @@ The first message gives the research depth with a target for how many searches a
    - Do I have enough diverse sources?
    - Is the information recent and reliable?
 
-6. ITERATE: If gaps exist, plan more searches to fill them. If coverage is good (score > 0.8), stop.
+6. ITERATE: If gaps exist, plan more searches to fill them. Stop only once the criteria under "When to Stop" are all met.
 
 ## Rules
 
@@ -56,11 +56,12 @@ The first message gives the research depth with a target for how many searches a
 
 ## When to Stop
 
-Stop researching when:
-- You've covered all planned sub-topics
-- You have 8+ quality findings
-- Your coverage score is above 0.8
-- OR you've exhausted useful search angles
+Call evaluate_progress with should_continue: false only when ALL of these are true:
+- You've run at least the minimum searches and page reads for this depth (the low end of the target in the first message). Searches and reads that failed or were repeats don't count.
+- Every sub-topic in your plan has findings, from at least 2 different sources
+- Your honest coverage score is 0.8 or higher
+
+A stop request below the minimum doesn't end the run: evaluate_progress tells you what's still missing, so keep researching. If a sub-topic runs dry, try a different kind of source (industry reports, government or agency data, news, academic papers, company announcements) or an adjacent angle rather than stopping.
 
 Do NOT stop if:
 - Major sub-topics are unexplored
@@ -70,11 +71,14 @@ Do NOT stop if:
 
 // Expected workload per depth, stated in the first message (it varies per run, so
 // it stays out of the cached system prompt). Searches match the new-research form.
-const DEPTH_TARGETS: Record<ResearchDepth, { searches: string; reads: string }> = {
-  QUICK: { searches: "5–10", reads: "3–5" },
-  STANDARD: { searches: "15–25", reads: "6–10" },
-  DEEP: { searches: "30–50", reads: "12–20" },
+// The low end is enforced: the loop won't end the run on the agent's say-so below it.
+const DEPTH_TARGETS: Record<ResearchDepth, { searches: [number, number]; reads: [number, number] }> = {
+  QUICK: { searches: [5, 10], reads: [3, 5] },
+  STANDARD: { searches: [15, 25], reads: [6, 10] },
+  DEEP: { searches: [30, 50], reads: [12, 20] },
 };
+
+const range = ([min, max]: [number, number]) => `${min}–${max}`;
 
 export function buildInitialMessage(
   project: Pick<ResearchProject, "query" | "depth" | "focusAreas">,
@@ -83,7 +87,7 @@ export function buildInitialMessage(
   const target = DEPTH_TARGETS[project.depth];
   const parts = [
     `Today's date: ${new Date().toISOString().slice(0, 10)}`,
-    `Research depth: ${project.depth} — aim for ${target.searches} searches and ${target.reads} page reads`,
+    `Research depth: ${project.depth} — aim for ${range(target.searches)} searches and ${range(target.reads)} page reads (at least ${target.searches[0]} and ${target.reads[0]})`,
     `Research question: ${project.query}`,
   ];
   if (project.focusAreas.length) parts.push(`User's focus areas:\n- ${project.focusAreas.join("\n- ")}`);
@@ -100,6 +104,7 @@ export function createResearcherConfig(depth: ResearchDepth, tools: ToolRegistry
     systemPrompt: RESEARCHER_SYSTEM_PROMPT,
     tools: tools.getDefinitions(),
     maxTokensPerStep: 16_000, // thinking counts toward this, so don't set it low
+    minimumWork: { searches: DEPTH_TARGETS[depth].searches[0], pagesRead: DEPTH_TARGETS[depth].reads[0] },
     ...DEPTH_LIMITS[depth],
   };
 }
