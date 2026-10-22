@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "worker": "tsx watch --env-file=.env.local --tsconfig ./tsconfig.json src/lib/queue/start-worker.ts",
+    "dev:all": "concurrently -n web,worker -c blue,magenta \"npm run dev\" \"npm run worker\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

@@ -59,6 +59,13 @@ export function NewResearchForm() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
+
+      // The project exists now, so a failed start isn't fatal: it can be started from its page
+      const start = await fetch(`/api/research/${body.id}/start`, { method: "POST" });
+      if (!start.ok) {
+        const { error } = await start.json().catch(() => ({}));
+        toast.error("Couldn't start the agent", { description: error ?? `Request failed (${start.status})` });
+      }
       router.push(`/research/${body.id}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong";

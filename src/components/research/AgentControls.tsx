@@ -42,7 +42,7 @@ async function post(url: string, body?: unknown) {
 
 export function AgentControls({ projectId, status, findingCount, redirects }: Props) {
   const router = useRouter();
-  const [busy, setBusy] = useState<"pause" | "resume" | "stop" | "redirect" | null>(null);
+  const [busy, setBusy] = useState<"start" | "pause" | "resume" | "stop" | "redirect" | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
 
@@ -67,7 +67,15 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-3">
       <div className="flex flex-wrap items-center gap-2">
-        {paused ? (
+        {status === "CREATED" ? (
+          <Button
+            disabled={busy !== null}
+            onClick={() => run("start", async () => void (await post(`${base}/start`)))}
+          >
+            {busy === "start" ? <Loader2 className="animate-spin" /> : <Play />}
+            Start research
+          </Button>
+        ) : paused ? (
           <Button
             variant="outline"
             disabled={busy !== null}
@@ -109,9 +117,13 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
                 disabled={busy !== null}
                 onClick={() =>
                   run("stop", async () => {
-                    await post(`${base}/stop`);
+                    const { status } = await post(`${base}/stop`);
                     setStopOpen(false);
-                    toast.success("Research stopped");
+                    if (status === "STOPPING") {
+                      toast.success("Stopping research", { description: "The agent stops after its current step." });
+                    } else {
+                      toast.success("Research stopped");
+                    }
                   })
                 }
               >

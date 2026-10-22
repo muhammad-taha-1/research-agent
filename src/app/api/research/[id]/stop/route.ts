@@ -1,5 +1,6 @@
 import { jsonError, notFound, unauthorized } from "@/lib/api";
 import { getUserId } from "@/lib/auth";
+import { requestStop } from "@/lib/control/signals";
 import { prisma } from "@/lib/db/prisma";
 import { TERMINAL_STATUSES } from "@/lib/research/config";
 import { findOwnedProject } from "@/lib/research/queries";
@@ -15,16 +16,29 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/research/[id]/
     return jsonError(409, `Research is already ${project.status.toLowerCase()}`);
   }
 
-  // No job is running yet, so stopping is a direct state change. Phase 11 adds
-  // the Redis stop flag for running jobs and keeps this path for paused ones.
+  // The flag stops a running agent at its next step boundary; the worker then
+  // sets the run and project to STOPPED.
+  try {
+    await requestStop(id);
+  } catch {
+    return jsonError(503, "Couldn't reach Redis to stop the agent. Is it running?");
+  }
+
+  // No agent is running (not started, still waiting for a worker, or paused), so
+  // stop directly. A queued job sees the status and skips the project.
   const now = new Date();
-  await prisma.$transaction([
+  const [, stopped] = await prisma.$transaction([
     prisma.agentRun.updateMany({
-      where: { projectId: id, status: { in: ["RUNNING", "PAUSED"] } },
+      where: { projectId: id, status: "PAUSED" },
       data: { status: "STOPPED", endReason: "user_stop", completedAt: now },
     }),
-    prisma.researchProject.update({ where: { id }, data: { status: "STOPPED" } }),
+    prisma.researchProject.updateMany({
+      where: { id, status: { in: ["CREATED", "QUEUED", "PAUSED"] } },
+      data: { status: "STOPPED" },
+    }),
   ]);
 
-  return Response.json({ status: "STOPPED" });
+  return stopped.count > 0
+    ? Response.json({ status: "STOPPED" })
+    : Response.json({ status: "STOPPING" }, { status: 202 });
 }
