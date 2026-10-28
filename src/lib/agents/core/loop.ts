@@ -8,6 +8,7 @@ import { prisma } from "@/lib/db/prisma";
 import { toStepView, toUsageView } from "@/lib/research/queries";
 import type { ToolRegistry } from "@/lib/tools/registry";
 import { MAX_CONSECUTIVE_ERRORS } from "./limits";
+import { isDuplicate } from "./memory";
 import type {
   AgentConfig,
   AgentEvent,
@@ -225,7 +226,8 @@ async function runToolCall(
     status: result.success ? "COMPLETED" : "ERROR",
     error: result.error,
   });
-  if (call.name === "save_finding" && result.success) await emit(event("finding", result.data));
+  // A duplicate finding wasn't saved, so there's nothing to show
+  if (call.name === "save_finding" && result.success && !isDuplicate(result)) await emit(event("finding", result.data));
   if (call.name === "update_plan" && result.success) await emit(event("plan_update", result.data));
 
   return {

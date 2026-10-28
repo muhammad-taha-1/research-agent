@@ -55,17 +55,22 @@ export function resultCount(result: unknown): number | undefined {
 /** One line for the timeline: what the agent did in this step. */
 export function summarizeStep(step: AgentStepView): string {
   const input = step.toolInput;
+  // Agent memory answered a repeat without running the tool
+  const repeat = field(field(step.toolResult, "data"), "duplicate") === true;
   switch (step.type) {
     case "SEARCH": {
       const query = str(field(input, "query"));
+      if (repeat) return query ? `Skipped repeat search “${query}”` : "Skipped a repeat search";
       return query ? `Searched “${query}”` : "Searched the web";
     }
     case "READ": {
       const url = str(field(input, "url"));
+      if (repeat) return url ? `Skipped re-reading ${hostname(url)}` : "Skipped re-reading a page";
       return url ? `Read ${hostname(url)}` : "Read a page";
     }
     case "NOTE": {
       const title = str(field(input, "title"));
+      if (repeat) return title ? `Skipped duplicate finding: ${title}` : "Skipped a duplicate finding";
       return title ? `Noted: ${title}` : "Saved a finding";
     }
     case "PLAN": {
