@@ -3,7 +3,12 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { RunStatus, StepStatus, StepType } from "@/generated/prisma/enums";
 import { AGENT_BETAS, anthropic } from "@/lib/ai/anthropic";
 import { calculateCost } from "@/lib/ai/pricing";
-import { readControlSignals, takeRedirects } from "@/lib/control/signals";
+import {
+  hasPendingRedirects,
+  readControlSignals,
+  takeRedirects,
+  type PendingRedirect,
+} from "@/lib/control/signals";
 import { prisma } from "@/lib/db/prisma";
 import { toStepView, toUsageView } from "@/lib/research/queries";
 import type { ToolRegistry } from "@/lib/tools/registry";
@@ -101,16 +106,7 @@ export async function runAgentLoop(
       return "PAUSED";
     }
     const redirects = await takeRedirects(state.projectId); // reads AND clears the queue
-    if (redirects.length > 0) {
-      // A mid-conversation system message: it carries operator authority,
-      // doesn't edit history, and keeps the cache valid.
-      state.messages.push({
-        role: "system",
-        content: `New instruction from the user:\n${redirects.join("\n")}\nAdjust your plan accordingly.`,
-      });
-      await saveAndEmitStep(ctx, { type: "REDIRECT", reasoning: redirects.join("\n") });
-      await emit(event("redirect_applied", { instructions: redirects }));
-    }
+    if (redirects.length > 0) await applyRedirects(ctx, redirects);
 
     // ---- THINK: ask Claude for the next move ----
     await emit(event("thinking", { stepNumber: state.stepNumber + 1 }));
@@ -179,8 +175,40 @@ export async function runAgentLoop(
     if (state.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
       return endRun(ctx, "ERROR", "consecutive_errors");
     }
-    if (state.doneRequested) return endRun(ctx, "COMPLETED", "agent_done");
+    if (state.doneRequested) {
+      // An instruction that arrived as the agent wrapped up still gets applied: the
+      // conversation ends on tool results, so the next boundary can append it.
+      if (!(await hasPendingRedirects(state.projectId))) return endRun(ctx, "COMPLETED", "agent_done");
+      state.doneRequested = false;
+    }
   }
+}
+
+/**
+ * Appends the user's instructions as a mid-conversation system message: it carries
+ * operator authority (unlike text on a web page), doesn't edit history, and keeps
+ * the cache valid. It always follows a user message (the first message or tool results).
+ */
+async function applyRedirects(ctx: RunContext, redirects: PendingRedirect[]): Promise<void> {
+  const { state, emit } = ctx;
+  const instructions = redirects.map((r) => r.instruction);
+  const content = `New instruction from the user:\n${instructions.join("\n")}\nAdjust your plan accordingly.`;
+  const last = state.messages.at(-1);
+  if (last?.role === "system" && typeof last.content === "string") {
+    // Resumed from a checkpoint taken right after an earlier redirect, before Claude
+    // answered it. No response builds on that message yet, so extending it is safe.
+    last.content += `\n\n${content}`;
+  } else {
+    state.messages.push({ role: "system", content });
+  }
+  // Saved right away: the instructions are no longer queued in Redis
+  await checkpoint(ctx);
+
+  const ids = redirects.map((r) => r.id);
+  const appliedAt = new Date();
+  await prisma.redirect.updateMany({ where: { id: { in: ids }, appliedAt: null }, data: { appliedAt } });
+  await saveAndEmitStep(ctx, { type: "REDIRECT", reasoning: instructions.join("\n") });
+  await emit(event("redirect_applied", { ids, instructions, appliedAt: appliedAt.toISOString() }));
 }
 
 /** One tool call = one timeline step. Never throws: failures become error results. */

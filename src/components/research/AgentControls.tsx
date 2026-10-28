@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, CornerDownRight, Loader2, Pause, Play, Send, Square } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -45,10 +45,30 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
   const [busy, setBusy] = useState<"start" | "pause" | "resume" | "stop" | "redirect" | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
+  // Pause and stop take effect at the agent's next step boundary; until the status
+  // changes, show that the request is in
+  const [requested, setRequested] = useState<"pause" | "stop" | null>(null);
+  const [prevStatus, setPrevStatus] = useState(status);
+  if (status !== prevStatus) {
+    setPrevStatus(status);
+    if (!ACTIVE_STATUSES.includes(status)) setRequested(null);
+  }
 
   const terminal = TERMINAL_STATUSES.includes(status);
-  const canPause = ACTIVE_STATUSES.includes(status) && status !== "QUEUED";
+  const active = ACTIVE_STATUSES.includes(status);
+  const canPause = active && status !== "QUEUED";
   const paused = status === "PAUSED";
+  const pausing = requested === "pause" && active;
+  const stopping = requested === "stop" && active;
+
+  // "Applied" for instructions that were still pending while this page was open
+  const pendingIds = useRef(new Set(redirects.filter((r) => !r.appliedAt).map((r) => r.id)));
+  useEffect(() => {
+    for (const r of redirects) {
+      if (!r.appliedAt) pendingIds.current.add(r.id);
+      else if (pendingIds.current.delete(r.id)) toast.success("Instruction applied", { description: r.instruction });
+    }
+  }, [redirects]);
 
   async function run(action: NonNullable<typeof busy>, fn: () => Promise<void>) {
     setBusy(action);
@@ -87,18 +107,23 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
         ) : (
           <Button
             variant="outline"
-            disabled={!canPause || busy !== null}
-            onClick={() => run("pause", async () => void (await post(`${base}/pause`)))}
+            disabled={!canPause || pausing || stopping || busy !== null}
+            onClick={() =>
+              run("pause", async () => {
+                await post(`${base}/pause`);
+                setRequested("pause");
+              })
+            }
           >
-            {busy === "pause" ? <Loader2 className="animate-spin" /> : <Pause />}
-            Pause
+            {busy === "pause" || pausing ? <Loader2 className="animate-spin" /> : <Pause />}
+            {pausing ? "Pausing…" : "Pause"}
           </Button>
         )}
 
         <Dialog open={stopOpen} onOpenChange={setStopOpen}>
-          <DialogTrigger render={<Button variant="destructive" disabled={terminal || busy !== null} />}>
-            <Square />
-            Stop
+          <DialogTrigger render={<Button variant="destructive" disabled={terminal || stopping || busy !== null} />}>
+            {stopping ? <Loader2 className="animate-spin" /> : <Square />}
+            {stopping ? "Stopping…" : "Stop"}
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
@@ -120,6 +145,7 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
                     const { status } = await post(`${base}/stop`);
                     setStopOpen(false);
                     if (status === "STOPPING") {
+                      setRequested("stop");
                       toast.success("Stopping research", { description: "The agent stops after its current step." });
                     } else {
                       toast.success("Research stopped");
@@ -144,7 +170,7 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
               await post(`${base}/redirect`, { instruction: text });
               setInstruction("");
               toast.success("Instruction sent", {
-                description: "The agent applies it at its next step.",
+                description: paused ? "The agent applies it when you resume." : "The agent applies it at its next step.",
               });
             });
           }}
@@ -177,7 +203,7 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
                   <CornerDownRight className="mt-0.5 size-3.5 shrink-0 text-orange-400" />
                   <span className="min-w-0 flex-1 break-words">{r.instruction}</span>
                   <span className="shrink-0 font-mono text-[11px] text-muted-foreground" suppressHydrationWarning>
-                    {r.appliedAt ? "applied" : "pending"} · {formatDistanceToNow(new Date(r.createdAt), { addSuffix: true })}
+                    {r.appliedAt ? "applied" : terminal ? "not applied" : "pending"} · {formatDistanceToNow(new Date(r.createdAt), { addSuffix: true })}
                   </span>
                 </li>
               ))}

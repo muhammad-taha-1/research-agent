@@ -1,5 +1,6 @@
 import { jsonError, notFound, parseBody, unauthorized } from "@/lib/api";
 import { getUserId } from "@/lib/auth";
+import { queueRedirect } from "@/lib/control/signals";
 import { prisma } from "@/lib/db/prisma";
 import { TERMINAL_STATUSES } from "@/lib/research/config";
 import { findOwnedProject } from "@/lib/research/queries";
@@ -20,10 +21,17 @@ export async function POST(req: Request, ctx: RouteContext<"/api/research/[id]/r
   const parsed = await parseBody(req, redirectSchema);
   if ("response" in parsed) return parsed.response;
 
-  // Recorded now; the agent loop applies pending rows from Phase 11 on (Redis list + appliedAt).
+  // The row is the record; the Redis list is what the agent loop drains at its next
+  // step boundary (it then sets appliedAt). Sent while paused, it waits for resume.
   const redirect = await prisma.redirect.create({
     data: { projectId: id, instruction: parsed.data.instruction },
   });
+  try {
+    await queueRedirect(id, { id: redirect.id, instruction: redirect.instruction });
+  } catch {
+    await prisma.redirect.delete({ where: { id: redirect.id } });
+    return jsonError(503, "Couldn't reach Redis to send the instruction. Is it running?");
+  }
 
   const view: RedirectView = {
     id: redirect.id,

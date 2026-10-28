@@ -37,6 +37,7 @@ interface LiveState {
   status: Stamped<ProjectStatus> | null;
   firstActiveAt: string | null; // when a run started, for the elapsed clock
   runUsage: Record<string, Stamped<UsageView>>;
+  appliedRedirects: Record<string, string>; // redirect id → appliedAt
   activity: LiveActivity;
 }
 
@@ -46,6 +47,7 @@ const EMPTY: LiveState = {
   status: null,
   firstActiveAt: null,
   runUsage: {},
+  appliedRedirects: {},
   activity: { kind: "idle" },
 };
 
@@ -103,6 +105,13 @@ export function useResearchStream(project: ProjectDetail, position: StreamPositi
       update((s) => ({ ...s, runUsage: { ...s.runUsage, [runId]: { value: usage, at } } })),
     );
 
+    on<{ ids: string[]; appliedAt: string }>("redirect_applied", ({ ids, appliedAt }) =>
+      update((s) => ({
+        ...s,
+        appliedRedirects: { ...s.appliedRedirects, ...Object.fromEntries(ids.map((id) => [id, appliedAt])) },
+      })),
+    );
+
     on<{ status: ProjectStatus }>("status_change", ({ status }, at) => {
       update((s) => ({
         ...s,
@@ -148,6 +157,9 @@ function merge(project: ProjectDetail, loadedAt: string, live: LiveState): Proje
     status,
     steps: mergeSteps(project.steps, live.steps),
     findings: mergeById(project.findings, live.findings).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    redirects: project.redirects.map((r) =>
+      r.appliedAt || !live.appliedRedirects[r.id] ? r : { ...r, appliedAt: live.appliedRedirects[r.id] },
+    ),
     runUsage,
     usage: sumUsage(Object.values(runUsage)),
     startedAt: project.startedAt ?? live.firstActiveAt,
