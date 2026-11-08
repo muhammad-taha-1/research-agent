@@ -87,7 +87,8 @@ export type AgentEventType =
   | "status_change"
   | "redirect_applied"
   | "review"
-  | "report_chunk"
+  | "report_chunk" // { runId, offset, text }: the writer's text, in ~100ms batches
+  | "report_ready" // ReportDetail: the saved report, sent before the status changes back
   | "usage"
   | "agent_error"
   | "agent_done"

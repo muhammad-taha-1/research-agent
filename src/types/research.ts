@@ -82,7 +82,32 @@ export interface ProjectDetail {
   redirects: RedirectView[];
   usage: UsageView; // all runs together
   runUsage: Record<string, UsageView>; // by run id: a `usage` event replaces one entry
-  hasReport: boolean;
+  report: ReportDetail | null; // the saved report; a `report_ready` event carries a newer one
+  reportDraft: ReportDraft | null; // text streamed so far while the writer runs
+}
+
+/** A "##" or "###" heading, for the table of contents. */
+export interface ReportSection {
+  id: string; // the rendered heading's id
+  title: string;
+  level: 2 | 3;
+}
+
+export interface ReportDetail {
+  title: string;
+  summary: string;
+  content: string; // markdown, the appended source list included
+  sections: ReportSection[];
+  sourceCount: number;
+  wordCount: number;
+  createdAt: string;
+  updatedAt: string; // regenerating overwrites the report
+}
+
+/** The writer's text so far; `report_chunk` events extend it. */
+export interface ReportDraft {
+  runId: string;
+  text: string;
 }
 
 /** Where the page's database snapshot sits in the event stream; the live view starts there. */

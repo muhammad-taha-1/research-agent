@@ -73,7 +73,7 @@ export function describeEvent(e: AgentEvent): string | null {
   const d = e.data;
   switch (e.type) {
     case "step_complete": {
-      const detail = d.reasoning ?? JSON.stringify(d.toolInput);
+      const detail = d.reasoning ?? JSON.stringify(d.toolInput ?? d.toolResult ?? d.status);
       const line = String(detail).replace(/\s+/g, " ").slice(0, 160);
       const tokens = d.inputTokens ? `  [${d.inputTokens} in / ${d.outputTokens} out]` : "";
       const error = d.error ? `\n    error: ${d.error}` : "";
@@ -81,10 +81,13 @@ export function describeEvent(e: AgentEvent): string | null {
     }
     case "usage":
       return `   $${d.costUsd.toFixed(4)} total · cache read ${d.cacheReadTokens} / write ${d.cacheWriteTokens} / uncached ${d.inputTokens}`;
+    case "report_ready":
+      return `[report_ready] “${d.title}” · ${d.wordCount} words · ${d.sourceCount} sources`;
     case "thinking":
     case "tool_call":
     case "finding":
     case "plan_update":
+    case "report_chunk": // ~10 a second; report_ready sums them up
       return null; // step_complete shows the same thing once it's done
     default:
       return `[${e.type}] ${JSON.stringify(d)}`;

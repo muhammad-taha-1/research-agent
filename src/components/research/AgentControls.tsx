@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, CornerDownRight, Loader2, Pause, Play, Send, Square } from "lucide-react";
+import { ChevronDown, CornerDownRight, Loader2, Pause, Play, Send, Sparkles, Square } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useGenerateReport } from "@/hooks/useGenerateReport";
+import { postJson as post } from "@/lib/http";
 import { ACTIVE_STATUSES, INSTRUCTION_MAX, TERMINAL_STATUSES } from "@/lib/research/config";
 import type { ProjectStatus } from "@/generated/prisma/enums";
 import type { RedirectView } from "@/types/research";
@@ -26,21 +28,11 @@ interface Props {
   projectId: string;
   status: ProjectStatus;
   findingCount: number;
+  hasReport: boolean;
   redirects: RedirectView[];
 }
 
-async function post(url: string, body?: unknown) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
-  return data;
-}
-
-export function AgentControls({ projectId, status, findingCount, redirects }: Props) {
+export function AgentControls({ projectId, status, findingCount, hasReport, redirects }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState<"start" | "pause" | "resume" | "stop" | "redirect" | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
@@ -56,8 +48,10 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
 
   const terminal = TERMINAL_STATUSES.includes(status);
   const active = ACTIVE_STATUSES.includes(status);
-  const canPause = active && status !== "QUEUED";
+  const writing = status === "WRITING"; // one streamed call: it can be stopped, not paused or redirected
+  const canPause = active && status !== "QUEUED" && !writing;
   const paused = status === "PAUSED";
+  const report = useGenerateReport(projectId);
   const pausing = requested === "pause" && active;
   const stopping = requested === "stop" && active;
 
@@ -95,6 +89,11 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
             {busy === "start" ? <Loader2 className="animate-spin" /> : <Play />}
             Start research
           </Button>
+        ) : terminal && findingCount > 0 && !hasReport ? (
+          <Button disabled={report.pending || busy !== null} onClick={report.generate}>
+            {report.pending ? <Loader2 className="animate-spin" /> : <Sparkles />}
+            Generate report
+          </Button>
         ) : paused ? (
           <Button
             variant="outline"
@@ -127,16 +126,25 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Stop this research?</DialogTitle>
+              <DialogTitle>{writing ? "Stop writing the report?" : "Stop this research?"}</DialogTitle>
               <DialogDescription>
-                {findingCount > 0
-                  ? `The agent has found ${findingCount} ${findingCount === 1 ? "finding" : "findings"} so far. `
-                  : ""}
-                Everything found so far is kept, and you can still generate a report.
+                {writing ? (
+                  <>
+                    The report stops where it is and isn&apos;t saved.
+                    {hasReport ? " The previous report is kept." : ""} You can generate it again later.
+                  </>
+                ) : (
+                  <>
+                    {findingCount > 0
+                      ? `The agent has found ${findingCount} ${findingCount === 1 ? "finding" : "findings"} so far. `
+                      : ""}
+                    Everything found so far is kept, and you can still generate a report.
+                  </>
+                )}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <DialogClose render={<Button variant="outline" />}>Keep going</DialogClose>
+              <DialogClose render={<Button variant="outline" />}>{writing ? "Keep writing" : "Keep going"}</DialogClose>
               <Button
                 variant="destructive"
                 disabled={busy !== null}
@@ -146,7 +154,10 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
                     setStopOpen(false);
                     if (status === "STOPPING") {
                       setRequested("stop");
-                      toast.success("Stopping research", { description: "The agent stops after its current step." });
+                      toast.success(
+                        writing ? "Stopping the report" : "Stopping research",
+                        writing ? undefined : { description: "The agent stops after its current step." },
+                      );
                     } else {
                       toast.success("Research stopped");
                     }
@@ -154,7 +165,7 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
                 }
               >
                 {busy === "stop" && <Loader2 className="animate-spin" />}
-                Stop research
+                {writing ? "Stop writing" : "Stop research"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -178,12 +189,18 @@ export function AgentControls({ projectId, status, findingCount, redirects }: Pr
           <Input
             value={instruction}
             onChange={(e) => setInstruction(e.target.value)}
-            placeholder={terminal ? "Research has ended" : "Redirect the agent, e.g. “Focus on environmental impact”"}
+            placeholder={
+              terminal
+                ? "Research has ended"
+                : writing
+                  ? "The report is being written"
+                  : "Redirect the agent, e.g. “Focus on environmental impact”"
+            }
             maxLength={INSTRUCTION_MAX}
-            disabled={terminal}
+            disabled={terminal || writing}
             aria-label="Instruction for the agent"
           />
-          <Button type="submit" variant="secondary" disabled={terminal || !instruction.trim() || busy !== null}>
+          <Button type="submit" variant="secondary" disabled={terminal || writing || !instruction.trim() || busy !== null}>
             {busy === "redirect" ? <Loader2 className="animate-spin" /> : <Send />}
             <span className="sr-only sm:not-sr-only">Send</span>
           </Button>

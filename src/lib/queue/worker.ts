@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import { event } from "@/lib/agents/core/loop";
 import type { AgentEvent } from "@/lib/agents/core/types";
-import { orchestrateResearch } from "@/lib/agents/orchestrator";
+import { orchestrateResearch, writeReport } from "@/lib/agents/orchestrator";
 import { prisma } from "@/lib/db/prisma";
 import { publishEvent } from "@/lib/stream/events";
 import { createRedisConnection, HEARTBEAT_KEY, QUEUE_NAME, redis, type ResearchJob } from "./connection";
@@ -19,7 +19,7 @@ export function startWorker() {
       const emit = (e: AgentEvent) => publishEvent(projectId, e);
       console.log(`[${projectId.slice(-6)}] job ${job.id} (${kind}) picked up`);
 
-      if (kind === "report") throw new Error("Report generation isn't implemented yet (Phase 12)");
+      if (kind === "report") return writeReport(projectId, job.data.previousStatus, emit, job.id);
       await orchestrateResearch(projectId, emit, job.id);
     },
     {
@@ -40,6 +40,8 @@ export function startWorker() {
   worker.on("failed", async (job, err) => {
     if (!job) return;
     const { projectId } = job.data;
+    // A failed report leaves the research as it was; anything else is a failed project
+    const status = job.data.kind === "report" ? job.data.previousStatus : "ERROR";
     console.error(`[${projectId.slice(-6)}] job ${job.id} failed:`, err);
     try {
       const run = await prisma.agentRun.findFirst({
@@ -52,9 +54,9 @@ export function startWorker() {
           data: { status: "ERROR", endReason: "worker_error", error: err.message, completedAt: new Date() },
         });
       }
-      await prisma.researchProject.update({ where: { id: projectId }, data: { status: "ERROR" } });
+      await prisma.researchProject.update({ where: { id: projectId }, data: { status } });
       await publishEvent(projectId, event("agent_error", { runId: run?.id, reason: "worker_error", error: err.message }));
-      await publishEvent(projectId, event("status_change", { status: "ERROR" }));
+      await publishEvent(projectId, event("status_change", { status }));
     } catch (recordError) {
       console.error(`[${projectId.slice(-6)}] couldn't record the failure:`, recordError);
     }

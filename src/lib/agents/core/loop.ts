@@ -308,30 +308,44 @@ async function saveAndEmitStep(ctx: RunContext, step: StepInput): Promise<void> 
   await ctx.emit(event("step_complete", toStepView(row, ctx.config.role)));
 }
 
-/** Adds one model call's tokens and cost to the run, and emits the run's new totals. */
+/** Attaches this turn's tokens to the next step, and adds them to the run's totals. */
 async function recordUsage(ctx: RunContext, response: Anthropic.Beta.BetaMessage): Promise<void> {
   const { usage } = response;
-  const cost = calculateCost(response.model, usage);
-  ctx.state.costUsd += cost;
-
-  const cacheRead = usage.cache_read_input_tokens ?? 0;
-  const cacheWrite = usage.cache_creation_input_tokens ?? 0;
   ctx.pendingUsage = {
-    inputTokens: usage.input_tokens + cacheRead + cacheWrite, // the whole prompt, cached or not
+    inputTokens: promptTokens(usage),
     outputTokens: usage.output_tokens,
   };
+  ctx.state.costUsd += await recordRunUsage(ctx.state.runId, response, ctx.emit);
+}
 
+/** The whole prompt, cached or not. */
+export function promptTokens(usage: Anthropic.Beta.BetaUsage): number {
+  return usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+}
+
+/**
+ * Adds one model call's tokens and cost to a run, and emits the run's new totals.
+ * Returns the call's cost. Shared by every agent role, loop or not.
+ */
+export async function recordRunUsage(
+  runId: string,
+  response: Anthropic.Beta.BetaMessage,
+  emit: EmitFn,
+): Promise<number> {
+  const { usage } = response;
+  const cost = calculateCost(response.model, usage);
   const run = await prisma.agentRun.update({
-    where: { id: ctx.state.runId },
+    where: { id: runId },
     data: {
       totalInputTokens: { increment: usage.input_tokens },
       totalOutputTokens: { increment: usage.output_tokens },
-      totalCacheReadTokens: { increment: cacheRead },
-      totalCacheWriteTokens: { increment: cacheWrite },
+      totalCacheReadTokens: { increment: usage.cache_read_input_tokens ?? 0 },
+      totalCacheWriteTokens: { increment: usage.cache_creation_input_tokens ?? 0 },
       costUsd: { increment: cost },
     },
   });
-  await ctx.emit(event("usage", { runId: run.id, ...toUsageView(run) }));
+  await emit(event("usage", { runId: run.id, ...toUsageView(run) }));
+  return cost;
 }
 
 /** Persists the conversation and memory so the run can resume after a pause or crash. */

@@ -87,8 +87,13 @@ export function summarizeStep(step: AgentStepView): string {
       return `Operator instruction: ${firstLine(step.reasoning ?? str(field(input, "instruction")) ?? "")}`;
     case "REVIEW":
       return "Critic reviewed the findings";
-    case "WRITE":
-      return "Wrote the report";
+    case "WRITE": {
+      if (step.status === "ERROR") return `Couldn't write the report${step.error ? `: ${firstLine(step.error)}` : ""}`;
+      if (step.status === "SKIPPED") return "Stopped writing the report";
+      const title = str(field(step.toolResult, "title"));
+      const words = field<number>(step.toolResult, "wordCount");
+      return title ? `Wrote the report “${title}”${typeof words === "number" ? ` · ${words} words` : ""}` : "Wrote the report";
+    }
     case "THINK":
       return step.reasoning ? firstLine(step.reasoning) : "Thinking";
   }

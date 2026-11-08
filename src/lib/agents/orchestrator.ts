@@ -7,10 +7,11 @@ import { event, runAgentLoop } from "./core/loop";
 import { AgentMemory, type SerializedMemory } from "./core/memory";
 import type { AgentConfig, AgentState, EmitFn, RunOutcome } from "./core/types";
 import { buildInitialMessage, createResearcherConfig } from "./researcher";
+import { runWriterRun } from "./writer";
 
-// Runs a project's agents in order, inside a worker job. Phase 13 adds the critic
-// and gap-filling rounds, and Phase 12 the writer; until then a project is one
-// researcher round.
+// Runs a project's agents in order, inside a worker job. Phase 13 adds the critic,
+// the gap-filling rounds, and the writer at the end; until then a project is one
+// researcher round, and the report is written by a separate `report` job.
 
 // QUEUED for a fresh start or a resume; an active status when the job of a crashed
 // worker gets picked up again. Anything else (e.g. stopped while still queued) is skipped.
@@ -28,6 +29,25 @@ export async function orchestrateResearch(projectId: string, emit: EmitFn, jobId
 
   await setStatus(projectId, "COMPLETED", emit);
   await emit(event("done", {}));
+}
+
+/**
+ * A `report` job: writes (or rewrites) the report from the findings so far, then
+ * puts the project back where it was. Its status says how the research went, and
+ * writing a report afterwards doesn't change that.
+ */
+export async function writeReport(
+  projectId: string,
+  previousStatus: ProjectStatus,
+  emit: EmitFn,
+  jobId?: string,
+): Promise<void> {
+  const project = await prisma.researchProject.findUnique({ where: { id: projectId }, select: { status: true } });
+  if (project?.status !== "WRITING") return; // e.g. stopped before a worker picked the job up
+
+  await setStatus(projectId, "WRITING", emit, { agent: "writer" });
+  await runWriterRun(projectId, emit, jobId);
+  await setStatus(projectId, previousStatus, emit);
 }
 
 async function runResearcherRound(project: ResearchProject, emit: EmitFn, jobId?: string): Promise<RunOutcome> {

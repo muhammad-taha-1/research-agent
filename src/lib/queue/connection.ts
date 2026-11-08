@@ -1,9 +1,12 @@
 import { Queue } from "bullmq";
 import { Redis, type RedisOptions } from "ioredis";
+import type { ProjectStatus } from "@/generated/prisma/enums";
 
 export type ResearchJob =
   | { kind: "research"; projectId: string } // start, resume, or continue after a crash
-  | { kind: "report"; projectId: string }; // (re)generate the report only
+  // (Re)generate the report only. The project is WRITING meanwhile, and goes back to
+  // previousStatus (COMPLETED, STOPPED or ERROR) when the writer ends, however it ends.
+  | { kind: "report"; projectId: string; previousStatus: ProjectStatus };
 
 export const QUEUE_NAME = "research";
 export const HEARTBEAT_KEY = "worker:heartbeat";

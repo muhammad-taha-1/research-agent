@@ -7,7 +7,15 @@ import type { ProjectStatus } from "@/generated/prisma/enums";
 import { TERMINAL_STATUSES } from "@/lib/research/config";
 import { STATUS_META } from "@/lib/research/status";
 import { sumUsage } from "@/lib/research/usage";
-import type { AgentStepView, FindingView, ProjectDetail, StreamPosition, UsageView } from "@/types/research";
+import type {
+  AgentStepView,
+  FindingView,
+  ProjectDetail,
+  ReportDetail,
+  ReportDraft,
+  StreamPosition,
+  UsageView,
+} from "@/types/research";
 
 // Live updates for the research page. The server renders a database snapshot; this
 // hook streams the events after it (GET /api/research/[id]/stream) and merges them in.
@@ -31,6 +39,19 @@ interface Stamped<T> {
   at: string; // the event's timestamp
 }
 
+/** A stretch of the writer's text from `start` on, as report_chunk events delivered it. */
+interface DraftSegment {
+  runId: string;
+  start: number;
+  text: string;
+}
+
+interface ReportChunk {
+  runId: string;
+  offset: number;
+  text: string;
+}
+
 interface LiveState {
   steps: AgentStepView[];
   findings: FindingView[];
@@ -38,6 +59,8 @@ interface LiveState {
   firstActiveAt: string | null; // when a run started, for the elapsed clock
   runUsage: Record<string, Stamped<UsageView>>;
   appliedRedirects: Record<string, string>; // redirect id → appliedAt
+  draft: DraftSegment | null;
+  report: ReportDetail | null; // from report_ready
   activity: LiveActivity;
 }
 
@@ -48,6 +71,8 @@ const EMPTY: LiveState = {
   firstActiveAt: null,
   runUsage: {},
   appliedRedirects: {},
+  draft: null,
+  report: null,
   activity: { kind: "idle" },
 };
 
@@ -112,6 +137,10 @@ export function useResearchStream(project: ProjectDetail, position: StreamPositi
       })),
     );
 
+    on<ReportChunk>("report_chunk", (chunk) => update((s) => ({ ...s, draft: extendDraft(s.draft, chunk) })));
+
+    on<ReportDetail>("report_ready", (report) => update((s) => ({ ...s, report })));
+
     on<{ status: ProjectStatus }>("status_change", ({ status }, at) => {
       update((s) => ({
         ...s,
@@ -150,7 +179,8 @@ function merge(project: ProjectDetail, loadedAt: string, live: LiveState): Proje
   for (const [runId, u] of Object.entries(live.runUsage)) {
     if (newer(u) || !runUsage[runId]) runUsage[runId] = u.value;
   }
-  const running = STATUS_META[status].live;
+  // The clock times the research: a report written afterwards doesn't move it
+  const running = STATUS_META[status].live && status !== "WRITING";
 
   return {
     ...project,
@@ -162,9 +192,34 @@ function merge(project: ProjectDetail, loadedAt: string, live: LiveState): Proje
     ),
     runUsage,
     usage: sumUsage(Object.values(runUsage)),
+    report: newerReport(project.report, live.report),
+    reportDraft: mergeDraft(project.reportDraft, live.draft),
     startedAt: project.startedAt ?? live.firstActiveAt,
     endedAt: running ? null : (project.endedAt ?? (newer(live.status) ? live.status!.at : null)),
   };
+}
+
+function newerReport(a: ReportDetail | null, b: ReportDetail | null): ReportDetail | null {
+  if (!a || !b) return a ?? b;
+  return b.updatedAt > a.updatedAt ? b : a;
+}
+
+/** Adds a chunk at its offset. Replayed text overlaps exactly, since it's the same text. */
+function extendDraft(seg: DraftSegment | null, { runId, offset, text }: ReportChunk): DraftSegment {
+  if (!seg || seg.runId !== runId || offset < seg.start) return { runId, start: offset, text };
+  const end = seg.start + seg.text.length;
+  if (offset > end || offset + text.length <= end) return seg; // a gap (can't happen in order), or nothing new
+  return { ...seg, text: seg.text.slice(0, offset - seg.start) + text };
+}
+
+/** The page's draft (read from Redis on load) continued by the chunks streamed since. */
+function mergeDraft(draft: ReportDraft | null, seg: DraftSegment | null): ReportDraft | null {
+  if (!seg) return draft;
+  if (draft?.runId === seg.runId && seg.start <= draft.text.length) {
+    const text = draft.text.slice(0, seg.start) + seg.text;
+    return text.length >= draft.text.length ? { runId: seg.runId, text } : draft;
+  }
+  return { runId: seg.runId, text: seg.text };
 }
 
 function mergeById<T extends { id: string }>(base: T[], extra: T[]): T[] {

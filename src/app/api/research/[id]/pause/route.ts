@@ -12,6 +12,8 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/research/[id]/
   const project = await findOwnedProject(id, userId);
   if (!project) return notFound();
   if (project.status === "PAUSED") return jsonError(409, "Research is already paused");
+  // One streamed model call, with nothing to checkpoint midway
+  if (project.status === "WRITING") return jsonError(409, "The report can't be paused while it's written. Stop it instead");
   if (!ACTIVE_STATUSES.includes(project.status)) {
     return jsonError(409, project.status === "CREATED" ? "Research hasn't started" : `Research has already ${project.status.toLowerCase()}`);
   }

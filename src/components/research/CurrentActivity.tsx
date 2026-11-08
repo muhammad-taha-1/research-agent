@@ -30,7 +30,9 @@ export function CurrentActivity({ status, steps, activity }: Props) {
             </span>
             <p className="text-lg font-medium">{meta.activity}</p>
           </div>
-          {meta.live && activity.kind === "thinking" ? (
+          {status === "WRITING" ? (
+            <NowLine label="Now · Write" text="Turning the findings into a report. Open the Report tab to read along." />
+          ) : meta.live && activity.kind === "thinking" ? (
             <NowLine label="Now · Think" text="Deciding the next step…" />
           ) : meta.live && activity.kind === "tools" ? (
             activity.calls.map((c) => (

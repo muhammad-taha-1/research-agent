@@ -5,6 +5,7 @@ import { ResearchView } from "@/components/research/ResearchView";
 import { requireUser } from "@/lib/auth";
 import { getProjectDetail } from "@/lib/research/queries";
 import { latestEventId } from "@/lib/stream/events";
+import { readReportDraft } from "@/lib/stream/report-draft";
 
 export default function ResearchPage({ params }: PageProps<"/research/[id]">) {
   return (
@@ -24,7 +25,9 @@ async function Research({ params }: Pick<PageProps<"/research/[id]">, "params">)
   // Someone else's project 404s exactly like a missing one
   const project = await getProjectDetail(id, user.id);
   if (!project) notFound();
-  return <ResearchView project={project} position={{ cursor, loadedAt }} />;
+  // Read after the cursor too, so it holds at least every chunk before it
+  const reportDraft = project.status === "WRITING" ? await readReportDraft(id).catch(() => null) : null;
+  return <ResearchView project={{ ...project, reportDraft }} position={{ cursor, loadedAt }} />;
 }
 
 function ResearchViewSkeleton() {

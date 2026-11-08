@@ -17,6 +17,9 @@ export async function POST(req: Request, ctx: RouteContext<"/api/research/[id]/r
   if (TERMINAL_STATUSES.includes(project.status)) {
     return jsonError(409, `Research is already ${project.status.toLowerCase()}`);
   }
+  if (project.status === "WRITING") {
+    return jsonError(409, "The report is being written. Instructions only apply while the agent researches");
+  }
 
   const parsed = await parseBody(req, redirectSchema);
   if ("response" in parsed) return parsed.response;

@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { Activity, ArrowLeft, Bookmark, Clock, Footprints, Radar } from "lucide-react";
+import { Activity, ArrowLeft, Bookmark, Clock, FileText, Footprints, Radar } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNow } from "@/hooks/useNow";
 import { useResearchStream, type StreamConnection } from "@/hooks/useResearchStream";
@@ -13,6 +14,7 @@ import { AgentControls } from "./AgentControls";
 import { CostTracker } from "./CostTracker";
 import { CurrentActivity } from "./CurrentActivity";
 import { FindingsPanel } from "./FindingsPanel";
+import { ReportView } from "./ReportView";
 import { ResearchTimeline } from "./ResearchTimeline";
 import { StatusBadge } from "./StatusBadge";
 
@@ -21,10 +23,43 @@ import { StatusBadge } from "./StatusBadge";
 export function ResearchView({ project: snapshot, position }: { project: ProjectDetail; position: StreamPosition }) {
   const { project, activity: liveActivity, connection } = useResearchStream(snapshot, position);
   const live = STATUS_META[project.status].live;
+  const writing = project.status === "WRITING";
+
+  // Desktop: "Live research" | "Report". Mobile: one panel at a time, the report among them.
+  // Opens on the report once there is one (or while it's written), and switches to
+  // it when writing starts.
+  const showReport = writing || (project.report !== null && !live);
+  const [desktopTab, setDesktopTab] = useState(showReport ? "report" : "research");
+  const [mobileTab, setMobileTab] = useState(showReport ? "report" : "activity");
+  const [wasWriting, setWasWriting] = useState(writing);
+  if (writing !== wasWriting) {
+    setWasWriting(writing);
+    if (writing) {
+      setDesktopTab("report");
+      setMobileTab("report");
+    }
+  }
 
   const timeline = <ResearchTimeline steps={project.steps} live={live} />;
   const activity = <CurrentActivity status={project.status} steps={project.steps} activity={liveActivity} />;
   const findings = <FindingsPanel findings={project.findings} />;
+  const report = (
+    <ReportView
+      projectId={project.id}
+      status={project.status}
+      report={project.report}
+      draft={project.reportDraft}
+      findingCount={project.findings.length}
+      steps={project.steps}
+    />
+  );
+  const reportLabel = (
+    <>
+      <FileText />
+      Report
+      {writing && <span className="size-1.5 animate-pulse rounded-full bg-fuchsia-400" aria-label="being written" />}
+    </>
+  );
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6 lg:h-[calc(100svh-3.5rem)]">
@@ -73,18 +108,40 @@ export function ResearchView({ project: snapshot, position }: { project: Project
         projectId={project.id}
         status={project.status}
         findingCount={project.findings.length}
+        hasReport={project.report !== null}
         redirects={project.redirects}
       />
 
-      {/* Desktop: timeline | activity | findings, each scrolling on its own */}
-      <div className="hidden min-h-0 flex-1 gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)]">
-        {timeline}
-        {activity}
-        {findings}
-      </div>
+      {/* Desktop: timeline | activity | findings, each scrolling on its own; or the report */}
+      <Tabs
+        value={desktopTab}
+        onValueChange={(v) => setDesktopTab(String(v))}
+        className="hidden min-h-0 flex-1 lg:flex"
+      >
+        <TabsList>
+          <TabsTrigger value="research" className="px-3">
+            <Activity />
+            Live research
+          </TabsTrigger>
+          <TabsTrigger value="report" className="px-3">
+            {reportLabel}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent
+          value="research"
+          className="min-h-0 gap-4 data-[hidden]:hidden lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)]"
+        >
+          {timeline}
+          {activity}
+          {findings}
+        </TabsContent>
+        <TabsContent value="report" className="flex min-h-0 flex-col data-[hidden]:hidden">
+          {report}
+        </TabsContent>
+      </Tabs>
 
       {/* Mobile: one panel at a time */}
-      <Tabs defaultValue="activity" className="lg:hidden">
+      <Tabs value={mobileTab} onValueChange={(v) => setMobileTab(String(v))} className="lg:hidden">
         <TabsList className="w-full">
           <TabsTrigger value="timeline">
             <Activity />
@@ -99,10 +156,12 @@ export function ResearchView({ project: snapshot, position }: { project: Project
             Findings
             {project.findings.length > 0 && <span className="font-mono text-xs">{project.findings.length}</span>}
           </TabsTrigger>
+          <TabsTrigger value="report">{reportLabel}</TabsTrigger>
         </TabsList>
         <TabsContent value="timeline" className="flex h-[70svh] flex-col">{timeline}</TabsContent>
         <TabsContent value="activity" className="flex h-[70svh] flex-col">{activity}</TabsContent>
         <TabsContent value="findings" className="flex h-[70svh] flex-col">{findings}</TabsContent>
+        <TabsContent value="report" className="flex h-[70svh] flex-col">{report}</TabsContent>
       </Tabs>
     </div>
   );

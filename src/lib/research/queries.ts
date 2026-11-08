@@ -1,4 +1,4 @@
-import type { AgentRun, AgentStep, Finding, Prisma } from "@/generated/prisma/client";
+import type { AgentRun, AgentStep, Finding, Prisma, Report } from "@/generated/prisma/client";
 import type { AgentRole } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/db/prisma";
 import { sumUsage } from "./usage";
@@ -7,6 +7,8 @@ import type {
   FindingView,
   ProjectDetail,
   ProjectSummary,
+  ReportDetail,
+  ReportSection,
   UsageView,
 } from "@/types/research";
 
@@ -52,7 +54,7 @@ const detailInclude = {
   },
   findings: { orderBy: { createdAt: "asc" } },
   redirects: { orderBy: { createdAt: "asc" } },
-  report: { select: { id: true } },
+  report: true,
 } satisfies Prisma.ResearchProjectInclude;
 
 export async function getProjectDetail(id: string, userId: string): Promise<ProjectDetail | null> {
@@ -63,8 +65,11 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
   if (!project) return null;
 
   const { runs } = project;
-  const anyRunning = runs.some((r) => r.status === "RUNNING");
-  const lastRun = runs.at(-1);
+  // The clock covers the research. A report written later (maybe days later) has
+  // its own run, and doesn't count.
+  const researchRuns = runs.filter((r) => r.agentRole !== "WRITER");
+  const anyRunning = researchRuns.some((r) => r.status === "RUNNING");
+  const lastRun = researchRuns.at(-1);
 
   return {
     id: project.id,
@@ -87,7 +92,8 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
     })),
     usage: sumUsage(runs.map(toUsageView)),
     runUsage: Object.fromEntries(runs.map((r) => [r.id, toUsageView(r)])),
-    hasReport: project.report !== null,
+    report: project.report && toReportDetail(project.report),
+    reportDraft: null, // read from Redis by the page, only while the writer runs
   };
 }
 
@@ -136,5 +142,19 @@ export function toFindingView(f: Finding): FindingView {
     relevance: f.relevance,
     category: f.category,
     createdAt: f.createdAt.toISOString(),
+  };
+}
+
+/** The UI shape of a report; also what the `report_ready` event carries. */
+export function toReportDetail(r: Report): ReportDetail {
+  return {
+    title: r.title,
+    summary: r.summary,
+    content: r.content,
+    sections: Array.isArray(r.sections) ? (r.sections as unknown as ReportSection[]) : [],
+    sourceCount: r.sourceCount,
+    wordCount: r.wordCount,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
   };
 }
