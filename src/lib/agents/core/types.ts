@@ -55,6 +55,7 @@ export interface AgentConfig {
 export interface AgentState {
   projectId: string;
   runId: string;
+  round: number; // the run's research round (1 = initial, 2+ = gap filling)
   userId: string;
   messages: Anthropic.Beta.BetaMessageParam[]; // the append-only conversation
   memory: AgentMemory; // structured copy of what's been done and learned
@@ -86,7 +87,7 @@ export type AgentEventType =
   | "plan_update"
   | "status_change"
   | "redirect_applied"
-  | "review"
+  | "review" // CriticReviewView: the critic's verdict on one round
   | "report_chunk" // { runId, offset, text }: the writer's text, in ~100ms batches
   | "report_ready" // ReportDetail: the saved report, sent before the status changes back
   | "usage"

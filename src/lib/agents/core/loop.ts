@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Prisma } from "@/generated/prisma/client";
 import type { RunStatus, StepStatus, StepType } from "@/generated/prisma/enums";
 import { AGENT_BETAS, anthropic } from "@/lib/ai/anthropic";
-import { calculateCost } from "@/lib/ai/pricing";
+import { calculateCost, type TokenUsage } from "@/lib/ai/pricing";
 import {
   hasPendingRedirects,
   readControlSignals,
@@ -270,12 +270,13 @@ async function runToolCall(
 function missingWork({ config, state }: RunContext): string | null {
   const min = config.minimumWork;
   if (!min) return null;
-  const { searchCount, pagesRead } = state.memory;
-  if (searchCount >= min.searches && pagesRead >= min.pagesRead) return null;
+  const searches = Math.max(0, min.searches - state.memory.searchCount);
+  const reads = Math.max(0, min.pagesRead - state.memory.pagesRead);
+  if (searches === 0 && reads === 0) return null;
+  const todo = [searches && `${searches} more ${searches === 1 ? "search" : "searches"}`, reads && `${reads} more page ${reads === 1 ? "read" : "reads"}`];
   return (
-    `Not done yet: this depth needs at least ${min.searches} searches and ${min.pagesRead} page reads, ` +
-    `and you've done ${searchCount} and ${pagesRead}. Keep researching: fill your plan's gaps and ` +
-    `cross-check key claims against more sources.`
+    `Not done yet: this run needs at least ${todo.filter(Boolean).join(" and ")} before it can stop. ` +
+    `Keep researching: fill your plan's gaps and cross-check key claims against more sources.`
   );
 }
 
@@ -305,7 +306,7 @@ async function saveAndEmitStep(ctx: RunContext, step: StepInput): Promise<void> 
       error: step.error,
     },
   });
-  await ctx.emit(event("step_complete", toStepView(row, ctx.config.role)));
+  await ctx.emit(event("step_complete", toStepView(row, { agentRole: ctx.config.role, round: ctx.state.round })));
 }
 
 /** Attaches this turn's tokens to the next step, and adds them to the run's totals. */
@@ -319,7 +320,7 @@ async function recordUsage(ctx: RunContext, response: Anthropic.Beta.BetaMessage
 }
 
 /** The whole prompt, cached or not. */
-export function promptTokens(usage: Anthropic.Beta.BetaUsage): number {
+export function promptTokens(usage: TokenUsage): number {
   return usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
 }
 
@@ -329,7 +330,7 @@ export function promptTokens(usage: Anthropic.Beta.BetaUsage): number {
  */
 export async function recordRunUsage(
   runId: string,
-  response: Anthropic.Beta.BetaMessage,
+  response: { model: string; usage: TokenUsage },
   emit: EmitFn,
 ): Promise<number> {
   const { usage } = response;
@@ -344,7 +345,7 @@ export async function recordRunUsage(
       costUsd: { increment: cost },
     },
   });
-  await emit(event("usage", { runId: run.id, ...toUsageView(run) }));
+  await emit(event("usage", { runId: run.id, role: run.agentRole, ...toUsageView(run) }));
   return cost;
 }
 

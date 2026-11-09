@@ -9,8 +9,14 @@ export const PRICING: Record<string, { input: number; output: number; cacheWrite
   "claude-opus-5-5": { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 },
 };
 
+/** The token counts pricing needs; both the beta and the regular Messages API usage have them. */
+export type TokenUsage = Pick<
+  Anthropic.Beta.BetaUsage | Anthropic.Usage,
+  "input_tokens" | "output_tokens" | "cache_creation_input_tokens" | "cache_read_input_tokens"
+>;
+
 /** Price a response by `response.model` (the model that served it), not the one requested. */
-export function calculateCost(model: string, usage: Anthropic.Beta.BetaUsage): number {
+export function calculateCost(model: string, usage: TokenUsage): number {
   const p = PRICING[model];
   if (!p) {
     console.warn(`[pricing] no price for model "${model}"; counting $0`);

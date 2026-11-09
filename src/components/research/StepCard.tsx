@@ -1,17 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink, ShieldAlert, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDuration, hostname } from "@/lib/format";
-import { STEP_META, field, resultCount, summarizeStep } from "@/lib/research/steps";
-import type { AgentStepView } from "@/types/research";
+import { STEP_META, field, formatScore, resultCount, reviewOf, summarizeStep } from "@/lib/research/steps";
+import type { AgentStepView, CriticReviewView } from "@/types/research";
 
 export function StepCard({ step, active = false }: { step: AgentStepView; active?: boolean }) {
   const [open, setOpen] = useState(false);
   const meta = STEP_META[step.type];
   const Icon = meta.icon;
   const failed = step.status === "ERROR";
+  const review = reviewOf(step);
 
   return (
     <li className="relative animate-in pl-9 duration-300 fade-in slide-in-from-bottom-2">
@@ -54,6 +55,9 @@ export function StepCard({ step, active = false }: { step: AgentStepView; active
         </span>
       </button>
 
+      {/* The critic's verdict stays visible: it's why the next round happens */}
+      {review && <ReviewCard review={review} className="mt-1 mb-2 ml-2" />}
+
       {open && (
         <div className="mt-1 mb-2 ml-2 flex flex-col gap-3 border-l pl-4 text-sm">
           <StepDetails step={step} />
@@ -63,9 +67,49 @@ export function StepCard({ step, active = false }: { step: AgentStepView; active
   );
 }
 
+/** The critic's verdict: approved or not, score, and the gaps it sends the researcher back for. */
+export function ReviewCard({ review, className }: { review: CriticReviewView; className?: string }) {
+  const n = review.gaps.length;
+  return (
+    <div className={cn("flex flex-col gap-2 rounded-lg border border-rose-400/20 bg-rose-400/5 px-3 py-2.5 text-sm", className)}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs",
+            review.approved
+              ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+              : "border-amber-300/30 bg-amber-300/10 text-amber-200",
+          )}
+        >
+          {review.approved ? <ShieldCheck className="size-3" /> : <ShieldAlert className="size-3" />}
+          {review.approved ? "Approved" : "Needs more work"}
+        </span>
+        <span className="font-mono text-xs text-muted-foreground">Quality {formatScore(review.qualityScore)}/10</span>
+      </div>
+      {review.reason && <p className="text-muted-foreground">{review.reason}</p>}
+      {n > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className="font-medium">
+            Critic found {n} {n === 1 ? "gap" : "gaps"}:
+          </span>
+          <ul className="flex flex-col gap-1">
+            {review.gaps.map((gap, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <span className="mt-2 size-1.5 shrink-0 rounded-full bg-amber-300" />
+                <span className="min-w-0 break-words">{gap}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StepDetails({ step }: { step: AgentStepView }) {
   const input = step.toolInput;
   const result = step.toolResult;
+  const review = reviewOf(step);
 
   return (
     <>
@@ -89,6 +133,18 @@ function StepDetails({ step }: { step: AgentStepView }) {
       {step.type === "NOTE" && (
         <Detail label={String(field(input, "title") ?? "Finding")}>
           <span className="whitespace-pre-wrap">{String(field(input, "content") ?? "")}</span>
+        </Detail>
+      )}
+
+      {review?.coverage && <Detail label="Coverage">{review.coverage}</Detail>}
+      {review?.biasConcerns && <Detail label="Bias concerns">{review.biasConcerns}</Detail>}
+      {review && review.suggestedSearches.length > 0 && (
+        <Detail label="Suggested searches">
+          <ul className="flex flex-col gap-0.5">
+            {review.suggestedSearches.map((q, i) => (
+              <li key={i}>“{q}”</li>
+            ))}
+          </ul>
         </Detail>
       )}
 

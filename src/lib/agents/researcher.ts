@@ -3,7 +3,7 @@ import type { ResearchProject } from "@/generated/prisma/client";
 import type { ResearchDepth } from "@/generated/prisma/enums";
 import { MODELS } from "@/lib/ai/anthropic";
 import type { ToolRegistry } from "@/lib/tools/registry";
-import { DEPTH_LIMITS } from "./core/limits";
+import { DEPTH_LIMITS, GAP_ROUND_LIMITS } from "./core/limits";
 import type { AgentConfig } from "./core/types";
 
 // Keep this string fixed: anything that changes per run (today's date, the depth,
@@ -69,42 +69,72 @@ Do NOT stop if:
 - The user asked for deep research and you've only done surface-level searches
 `;
 
+type Targets = { searches: [number, number]; reads: [number, number] };
+
 // Expected workload per depth, stated in the first message (it varies per run, so
 // it stays out of the cached system prompt). Searches match the new-research form.
 // The low end is enforced: the loop won't end the run on the agent's say-so below it.
-const DEPTH_TARGETS: Record<ResearchDepth, { searches: [number, number]; reads: [number, number] }> = {
+const DEPTH_TARGETS: Record<ResearchDepth, Targets> = {
   QUICK: { searches: [5, 10], reads: [3, 5] },
   STANDARD: { searches: [15, 25], reads: [6, 10] },
   DEEP: { searches: [30, 50], reads: [12, 20] },
 };
 
+// A gap-filling round (round 2+) only chases the critic's gaps
+const GAP_TARGETS: Record<ResearchDepth, Targets> = {
+  QUICK: { searches: [2, 4], reads: [1, 3] },
+  STANDARD: { searches: [4, 8], reads: [2, 4] },
+  DEEP: { searches: [8, 15], reads: [4, 8] },
+};
+
+const targetsFor = (depth: ResearchDepth, round: number) => (round > 1 ? GAP_TARGETS : DEPTH_TARGETS)[depth];
+
 const range = ([min, max]: [number, number]) => `${min}–${max}`;
+
+export interface RoundBrief {
+  round?: number; // 1 = the initial round; 2+ = gap filling
+  memorySummary?: string; // what earlier rounds did and found
+  focusAreas?: string[]; // the critic's gaps
+  suggestedSearches?: string[];
+}
 
 export function buildInitialMessage(
   project: Pick<ResearchProject, "query" | "depth" | "focusAreas">,
-  opts: { memorySummary?: string; focusAreas?: string[]; suggestedSearches?: string[] } = {},
+  brief: RoundBrief = {},
 ): Anthropic.Beta.BetaMessageParam {
-  const target = DEPTH_TARGETS[project.depth];
-  const parts = [
-    `Today's date: ${new Date().toISOString().slice(0, 10)}`,
-    `Research depth: ${project.depth} — aim for ${range(target.searches)} searches and ${range(target.reads)} page reads (at least ${target.searches[0]} and ${target.reads[0]})`,
-    `Research question: ${project.query}`,
-  ];
+  const round = brief.round ?? 1;
+  const target = targetsFor(project.depth, round);
+  const workload = `aim for ${range(target.searches)} searches and ${range(target.reads)} page reads (at least ${target.searches[0]} and ${target.reads[0]})`;
+  const parts = [`Today's date: ${new Date().toISOString().slice(0, 10)}`];
+  if (round === 1) {
+    parts.push(`Research depth: ${project.depth} — ${workload}`);
+  } else {
+    parts.push(
+      `Research depth: ${project.depth}. This is gap-filling round ${round}: earlier rounds already researched ` +
+        `this question, and a critic reviewed their findings. Fill the gaps below rather than redoing earlier ` +
+        `work — ${workload}. The plan you saved earlier is below; update it for this round's gaps first.`,
+    );
+  }
+  parts.push(`Research question: ${project.query}`);
   if (project.focusAreas.length) parts.push(`User's focus areas:\n- ${project.focusAreas.join("\n- ")}`);
-  if (opts.memorySummary) parts.push(`## What earlier rounds already found\n${opts.memorySummary}`);
-  if (opts.focusAreas?.length) parts.push(`## Gaps to fill this round\n- ${opts.focusAreas.join("\n- ")}`);
-  if (opts.suggestedSearches?.length) parts.push(`Suggested searches:\n- ${opts.suggestedSearches.join("\n- ")}`);
+  if (brief.memorySummary) parts.push(`## What earlier rounds already found\n${brief.memorySummary}`);
+  if (brief.focusAreas?.length) parts.push(`## Gaps to fill this round\n- ${brief.focusAreas.join("\n- ")}`);
+  if (brief.suggestedSearches?.length) parts.push(`Suggested searches:\n- ${brief.suggestedSearches.join("\n- ")}`);
+  if (round > 1 && !brief.focusAreas?.length) {
+    parts.push("The critic found no gaps, but the user sent a new instruction for this round. It follows this message.");
+  }
   return { role: "user", content: parts.join("\n\n") };
 }
 
-export function createResearcherConfig(depth: ResearchDepth, tools: ToolRegistry): AgentConfig {
+export function createResearcherConfig(depth: ResearchDepth, tools: ToolRegistry, round = 1): AgentConfig {
+  const target = targetsFor(depth, round);
   return {
     role: "RESEARCHER",
     model: MODELS.researcher,
     systemPrompt: RESEARCHER_SYSTEM_PROMPT,
     tools: tools.getDefinitions(),
     maxTokensPerStep: 16_000, // thinking counts toward this, so don't set it low
-    minimumWork: { searches: DEPTH_TARGETS[depth].searches[0], pagesRead: DEPTH_TARGETS[depth].reads[0] },
-    ...DEPTH_LIMITS[depth],
+    minimumWork: { searches: target.searches[0], pagesRead: target.reads[0] },
+    ...(round > 1 ? GAP_ROUND_LIMITS : DEPTH_LIMITS)[depth],
   };
 }

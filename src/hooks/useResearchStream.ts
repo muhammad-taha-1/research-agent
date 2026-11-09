@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AgentEventType } from "@/lib/agents/core/types";
-import type { ProjectStatus } from "@/generated/prisma/enums";
+import type { AgentRole, ProjectStatus } from "@/generated/prisma/enums";
 import { TERMINAL_STATUSES } from "@/lib/research/config";
 import { STATUS_META } from "@/lib/research/status";
 import { sumUsage } from "@/lib/research/usage";
@@ -56,8 +56,10 @@ interface LiveState {
   steps: AgentStepView[];
   findings: FindingView[];
   status: Stamped<ProjectStatus> | null;
+  round: Stamped<number> | null; // from status_change: the round the researcher or critic is on
   firstActiveAt: string | null; // when a run started, for the elapsed clock
   runUsage: Record<string, Stamped<UsageView>>;
+  runRoles: Record<string, AgentRole>;
   appliedRedirects: Record<string, string>; // redirect id → appliedAt
   draft: DraftSegment | null;
   report: ReportDetail | null; // from report_ready
@@ -68,8 +70,10 @@ const EMPTY: LiveState = {
   steps: [],
   findings: [],
   status: null,
+  round: null,
   firstActiveAt: null,
   runUsage: {},
+  runRoles: {},
   appliedRedirects: {},
   draft: null,
   report: null,
@@ -126,8 +130,12 @@ export function useResearchStream(project: ProjectDetail, position: StreamPositi
 
     on<FindingView>("finding", (finding) => update((s) => ({ ...s, findings: [...s.findings, finding] })));
 
-    on<UsageView & { runId: string }>("usage", ({ runId, ...usage }, at) =>
-      update((s) => ({ ...s, runUsage: { ...s.runUsage, [runId]: { value: usage, at } } })),
+    on<UsageView & { runId: string; role?: AgentRole }>("usage", ({ runId, role, ...usage }, at) =>
+      update((s) => ({
+        ...s,
+        runUsage: { ...s.runUsage, [runId]: { value: usage, at } },
+        runRoles: role ? { ...s.runRoles, [runId]: role } : s.runRoles,
+      })),
     );
 
     on<{ ids: string[]; appliedAt: string }>("redirect_applied", ({ ids, appliedAt }) =>
@@ -141,10 +149,11 @@ export function useResearchStream(project: ProjectDetail, position: StreamPositi
 
     on<ReportDetail>("report_ready", (report) => update((s) => ({ ...s, report })));
 
-    on<{ status: ProjectStatus }>("status_change", ({ status }, at) => {
+    on<{ status: ProjectStatus; round?: number }>("status_change", ({ status, round }, at) => {
       update((s) => ({
         ...s,
         status: { value: status, at },
+        round: typeof round === "number" ? { value: round, at } : s.round,
         firstActiveAt: s.firstActiveAt ?? (STATUS_META[status].live ? at : null),
         activity: STATUS_META[status].live ? s.activity : { kind: "idle" },
       }));
@@ -190,7 +199,9 @@ function merge(project: ProjectDetail, loadedAt: string, live: LiveState): Proje
     redirects: project.redirects.map((r) =>
       r.appliedAt || !live.appliedRedirects[r.id] ? r : { ...r, appliedAt: live.appliedRedirects[r.id] },
     ),
+    round: newer(live.round) ? Math.max(project.round, live.round!.value) : project.round,
     runUsage,
+    runRoles: { ...live.runRoles, ...project.runRoles },
     usage: sumUsage(Object.values(runUsage)),
     report: newerReport(project.report, live.report),
     reportDraft: mergeDraft(project.reportDraft, live.draft),

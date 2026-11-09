@@ -1,9 +1,10 @@
-import type { AgentRun, AgentStep, Finding, Prisma, Report } from "@/generated/prisma/client";
+import type { AgentRun, AgentStep, CriticReview, Finding, Prisma, Report } from "@/generated/prisma/client";
 import type { AgentRole } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/db/prisma";
 import { sumUsage } from "./usage";
 import type {
   AgentStepView,
+  CriticReviewView,
   FindingView,
   ProjectDetail,
   ProjectSummary,
@@ -82,7 +83,7 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
     startedAt: runs[0]?.startedAt.toISOString() ?? null,
     endedAt: !anyRunning && lastRun?.completedAt ? lastRun.completedAt.toISOString() : null,
     // All runs in order (researcher rounds, critic, writer), so the timeline reads as one story
-    steps: runs.flatMap((run) => run.steps.map((s) => toStepView(s, run.agentRole))),
+    steps: runs.flatMap((run) => run.steps.map((s) => toStepView(s, run))),
     findings: project.findings.map(toFindingView),
     redirects: project.redirects.map((r) => ({
       id: r.id,
@@ -90,19 +91,22 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
       appliedAt: r.appliedAt?.toISOString() ?? null,
       createdAt: r.createdAt.toISOString(),
     })),
+    round: Math.max(1, ...runs.filter((r) => r.agentRole === "RESEARCHER").map((r) => r.round)),
     usage: sumUsage(runs.map(toUsageView)),
     runUsage: Object.fromEntries(runs.map((r) => [r.id, toUsageView(r)])),
+    runRoles: Object.fromEntries(runs.map((r) => [r.id, r.agentRole])),
     report: project.report && toReportDetail(project.report),
     reportDraft: null, // read from Redis by the page, only while the writer runs
   };
 }
 
 /** The UI shape of a step; also what the `step_complete` event carries. */
-export function toStepView(s: AgentStep, agentRole: AgentRole): AgentStepView {
+export function toStepView(s: AgentStep, run: { agentRole: AgentRole; round: number }): AgentStepView {
   return {
     id: s.id,
     runId: s.runId,
-    agentRole,
+    agentRole: run.agentRole,
+    round: run.round,
     stepNumber: s.stepNumber,
     type: s.type,
     reasoning: s.reasoning,
@@ -142,6 +146,20 @@ export function toFindingView(f: Finding): FindingView {
     relevance: f.relevance,
     category: f.category,
     createdAt: f.createdAt.toISOString(),
+  };
+}
+
+/** The UI shape of a saved review. Coverage isn't stored on the row; the REVIEW step's result has it. */
+export function toCriticReviewView(r: CriticReview, coverage = ""): CriticReviewView {
+  return {
+    round: r.round,
+    qualityScore: r.qualityScore,
+    approved: r.approved,
+    coverage,
+    gaps: r.gaps,
+    suggestedSearches: r.suggestedSearches,
+    biasConcerns: r.biasConcerns ?? "",
+    reason: r.reason,
   };
 }
 

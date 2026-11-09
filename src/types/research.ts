@@ -14,6 +14,7 @@ export interface AgentStepView {
   id: string;
   runId: string;
   agentRole: AgentRole;
+  round: number; // the run's round: researcher round, or which round the critic reviewed
   stepNumber: number;
   type: StepType;
   reasoning: string | null;
@@ -49,6 +50,18 @@ export interface UsageView {
   pagesRead: number;
 }
 
+/** The critic's verdict on one round: a REVIEW step's result, and the `review` event's payload. */
+export interface CriticReviewView {
+  round: number;
+  qualityScore: number; // 0-10
+  approved: boolean;
+  coverage: string;
+  gaps: string[];
+  suggestedSearches: string[];
+  biasConcerns: string;
+  reason: string;
+}
+
 export interface RedirectView {
   id: string;
   instruction: string;
@@ -80,8 +93,10 @@ export interface ProjectDetail {
   steps: AgentStepView[];
   findings: FindingView[];
   redirects: RedirectView[];
+  round: number; // the newest research round (1 = initial, 2+ = gap filling)
   usage: UsageView; // all runs together
   runUsage: Record<string, UsageView>; // by run id: a `usage` event replaces one entry
+  runRoles: Record<string, AgentRole>; // by run id, for the per-agent cost breakdown
   report: ReportDetail | null; // the saved report; a `report_ready` event carries a newer one
   reportDraft: ReportDraft | null; // text streamed so far while the writer runs
 }

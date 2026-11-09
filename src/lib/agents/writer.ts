@@ -181,7 +181,7 @@ export async function runWriterRun(projectId: string, emit: EmitFn, jobId?: stri
         error: step.error,
       },
     });
-    await emit(event("step_complete", toStepView(row, "WRITER")));
+    await emit(event("step_complete", toStepView(row, run)));
     const data = { runId: run.id, role: "WRITER", outcome, reason, error: step.error };
     await emit(event(outcome === "ERROR" ? "agent_error" : "agent_done", data));
     return outcome;

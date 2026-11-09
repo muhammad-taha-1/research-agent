@@ -10,9 +10,9 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
-import type { StepType } from "@/generated/prisma/enums";
+import type { AgentRole, StepType } from "@/generated/prisma/enums";
 import { hostname } from "@/lib/format";
-import type { AgentStepView } from "@/types/research";
+import type { AgentStepView, CriticReviewView } from "@/types/research";
 
 // Color is identity for the icon mark only; step text stays in text tokens.
 // Spec palette: blue search, green read, yellow think, purple note.
@@ -27,6 +27,50 @@ export const STEP_META: Record<StepType, { label: string; icon: LucideIcon; tone
   REVIEW: { label: "Review", icon: ShieldCheck, tone: "text-rose-400 bg-rose-400/10 ring-rose-400/30" },
   WRITE: { label: "Write", icon: PenLine, tone: "text-fuchsia-400 bg-fuchsia-400/10 ring-fuchsia-400/30" },
 };
+
+// Each agent's color, shared with the status that agent works in (RESEARCHING,
+// REVIEWING, WRITING). Always shown next to the agent's name, never alone.
+export const AGENT_META: Record<AgentRole, { label: string; dot: string; rail: string; text: string }> = {
+  RESEARCHER: { label: "Researcher", dot: "bg-emerald-400", rail: "before:bg-emerald-400/40", text: "text-emerald-300" },
+  CRITIC: { label: "Critic", dot: "bg-rose-400", rail: "before:bg-rose-400/40", text: "text-rose-300" },
+  WRITER: { label: "Writer", dot: "bg-fuchsia-400", rail: "before:bg-fuchsia-400/40", text: "text-fuchsia-300" },
+  ORCHESTRATOR: { label: "Orchestrator", dot: "bg-muted-foreground", rail: "before:bg-border", text: "text-muted-foreground" },
+};
+
+/** How a run is titled on the timeline: "Research", "Research round 2 — filling gaps", "Critic review 1"… */
+export function runTitle(role: AgentRole, round: number): string {
+  switch (role) {
+    case "RESEARCHER":
+      return round > 1 ? `Research round ${round} — filling gaps` : "Research";
+    case "CRITIC":
+      return `Critic review ${round}`;
+    case "WRITER":
+      return "Report";
+    default:
+      return AGENT_META[role].label;
+  }
+}
+
+export const formatScore = (score: number) => (Number.isInteger(score) ? String(score) : score.toFixed(1));
+
+/** The critic's verdict a REVIEW step carries, or null (failed review, or not a review). */
+export function reviewOf(step: AgentStepView): CriticReviewView | null {
+  if (step.type !== "REVIEW") return null;
+  const r = step.toolResult;
+  if (typeof field(r, "approved") !== "boolean" || typeof field(r, "qualityScore") !== "number") return null;
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  const text = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    round: field<number>(r, "round") ?? step.round,
+    qualityScore: field<number>(r, "qualityScore")!,
+    approved: field<boolean>(r, "approved")!,
+    coverage: text(field(r, "coverage")),
+    gaps: list(field(r, "gaps")),
+    suggestedSearches: list(field(r, "suggestedSearches")),
+    biasConcerns: text(field(r, "biasConcerns")),
+    reason: text(field(r, "reason")),
+  };
+}
 
 /** Safe field access on tool input/result JSON, whose shape the UI can't trust. */
 export function field<T = unknown>(obj: unknown, key: string): T | undefined {
@@ -85,8 +129,14 @@ export function summarizeStep(step: AgentStepView): string {
     }
     case "REDIRECT":
       return `Operator instruction: ${firstLine(step.reasoning ?? str(field(input, "instruction")) ?? "")}`;
-    case "REVIEW":
-      return "Critic reviewed the findings";
+    case "REVIEW": {
+      const review = reviewOf(step);
+      if (!review) return `Critic review failed${step.error ? `: ${firstLine(step.error)}` : ""} — moving on`;
+      const score = `${formatScore(review.qualityScore)}/10`;
+      if (review.approved) return `Critic approved the findings · ${score}`;
+      const n = review.gaps.length;
+      return `Critic found ${n} ${n === 1 ? "gap" : "gaps"} · ${score}`;
+    }
     case "WRITE": {
       if (step.status === "ERROR") return `Couldn't write the report${step.error ? `: ${firstLine(step.error)}` : ""}`;
       if (step.status === "SKIPPED") return "Stopped writing the report";

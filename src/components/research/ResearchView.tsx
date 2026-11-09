@@ -9,6 +9,9 @@ import { useResearchStream, type StreamConnection } from "@/hooks/useResearchStr
 import { formatDuration } from "@/lib/format";
 import { DEPTH_OPTIONS } from "@/lib/research/config";
 import { STATUS_META } from "@/lib/research/status";
+import { AGENT_META } from "@/lib/research/steps";
+import { cn } from "@/lib/utils";
+import type { AgentRole, ProjectStatus } from "@/generated/prisma/enums";
 import type { ProjectDetail, StreamPosition } from "@/types/research";
 import { AgentControls } from "./AgentControls";
 import { CostTracker } from "./CostTracker";
@@ -41,7 +44,9 @@ export function ResearchView({ project: snapshot, position }: { project: Project
   }
 
   const timeline = <ResearchTimeline steps={project.steps} live={live} />;
-  const activity = <CurrentActivity status={project.status} steps={project.steps} activity={liveActivity} />;
+  const activity = (
+    <CurrentActivity status={project.status} round={project.round} steps={project.steps} activity={liveActivity} />
+  );
   const findings = <FindingsPanel findings={project.findings} />;
   const report = (
     <ReportView
@@ -76,6 +81,7 @@ export function ResearchView({ project: snapshot, position }: { project: Project
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-xl font-semibold tracking-tight">{project.title}</h1>
               <StatusBadge status={project.status} />
+              <ActiveAgent status={project.status} round={project.round} />
               {live && <ConnectionIndicator connection={connection} />}
             </div>
             <p className="max-w-3xl text-sm text-muted-foreground">{project.query}</p>
@@ -103,7 +109,7 @@ export function ResearchView({ project: snapshot, position }: { project: Project
         </div>
       </header>
 
-      <CostTracker usage={project.usage} />
+      <CostTracker usage={project.usage} runUsage={project.runUsage} runRoles={project.runRoles} />
       <AgentControls
         projectId={project.id}
         status={project.status}
@@ -164,6 +170,30 @@ export function ResearchView({ project: snapshot, position }: { project: Project
         <TabsContent value="report" className="flex h-[70svh] flex-col">{report}</TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+// Which agent is working while the project is in each status
+const AGENT_BY_STATUS: Partial<Record<ProjectStatus, AgentRole>> = {
+  PLANNING: "RESEARCHER",
+  RESEARCHING: "RESEARCHER",
+  REVIEWING: "CRITIC",
+  WRITING: "WRITER",
+};
+
+/** The agent working right now, and on which round: "Researcher · Round 2 — filling gaps". */
+function ActiveAgent({ status, round }: { status: ProjectStatus; round: number }) {
+  const role = AGENT_BY_STATUS[status];
+  if (!role) return null;
+  const meta = AGENT_META[role];
+  const detail =
+    role === "RESEARCHER" && round > 1 ? `Round ${round} — filling gaps` : role === "CRITIC" ? `Reviewing round ${round}` : null;
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs" role="status">
+      <span className={cn("size-1.5 rounded-full", meta.dot)} />
+      <span className={meta.text}>{meta.label}</span>
+      {detail && <span className="text-muted-foreground">· {detail}</span>}
+    </span>
   );
 }
 

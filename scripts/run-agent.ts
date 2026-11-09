@@ -36,16 +36,22 @@ async function main() {
     if (line) console.log(line);
   });
 
-  const run = await prisma.agentRun.findFirstOrThrow({
+  // One line per agent run (researcher rounds, critic reviews, writer), then the total
+  const runs = await prisma.agentRun.findMany({
     where: { projectId: project.id },
-    orderBy: { startedAt: "desc" },
+    orderBy: { startedAt: "asc" },
     include: { _count: { select: { steps: { where: { toolName: { not: null } } } } } },
   });
+  console.log("");
+  for (const run of runs) {
+    const work = run.agentRole === "RESEARCHER" ? ` · ${run._count.steps} tool calls, ${run.totalSearches} searches, ${run.totalPagesRead} reads` : "";
+    const secs = run.completedAt ? Math.round((run.completedAt.getTime() - run.startedAt.getTime()) / 1000) : "?";
+    console.log(`${run.agentRole} r${run.round}: ${run.status} (${run.endReason})${work} · ${secs}s · $${run.costUsd.toFixed(4)}`);
+  }
+  const { status } = await prisma.researchProject.findUniqueOrThrow({ where: { id: project.id } });
   const findings = await prisma.finding.count({ where: { projectId: project.id } });
-  console.log(
-    `\n${run.status} (${run.endReason}) after ${run._count.steps} tool calls (${run.totalSearches} searches, ${run.totalPagesRead} reads, ${findings} findings), ` +
-      `${Math.round((Date.now() - startedAt) / 1000)}s, $${run.costUsd.toFixed(4)}`,
-  );
+  const cost = runs.reduce((sum, r) => sum + r.costUsd, 0);
+  console.log(`\n${status}: ${findings} findings, ${Math.round((Date.now() - startedAt) / 1000)}s, $${cost.toFixed(4)}`);
   console.log(`Open: ${process.env.NEXTAUTH_URL ?? "http://localhost:3000"}/research/${project.id}`);
 }
 

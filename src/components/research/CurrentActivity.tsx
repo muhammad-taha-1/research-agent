@@ -2,22 +2,32 @@ import { Check, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProjectStatus } from "@/generated/prisma/enums";
 import { PIPELINE, STATUS_META } from "@/lib/research/status";
-import { STEP_META, describeToolCall, field, summarizeStep } from "@/lib/research/steps";
+import { STEP_META, describeToolCall, field, reviewOf, summarizeStep } from "@/lib/research/steps";
 import type { LiveActivity } from "@/hooks/useResearchStream";
 import type { AgentStepView } from "@/types/research";
 import { Panel } from "./Panel";
+import { ReviewCard } from "./StepCard";
 
 interface Props {
   status: ProjectStatus;
+  round: number; // the newest research round
   steps: AgentStepView[];
   activity: LiveActivity; // between saved steps: thinking, or tool calls still running
 }
 
-export function CurrentActivity({ status, steps, activity }: Props) {
+export function CurrentActivity({ status, round, steps, activity }: Props) {
   const meta = STATUS_META[status];
   const latest = steps.at(-1);
   const stage = currentStage(status, steps);
   const plan = latestPlan(steps);
+  const reviewStep = steps.findLast((s) => s.type === "REVIEW");
+  const review = reviewStep && reviewOf(reviewStep);
+  const headline =
+    status === "RESEARCHING" && round > 1
+      ? `Filling the gaps the critic found (round ${round})…`
+      : status === "REVIEWING" && round > 1
+        ? `The critic is reviewing round ${round}…`
+        : meta.activity;
 
   return (
     <Panel title="Current activity">
@@ -28,10 +38,12 @@ export function CurrentActivity({ status, steps, activity }: Props) {
               {meta.live && <span className={cn("absolute inset-0 animate-ping rounded-full opacity-60", meta.dot)} />}
               <span className={cn("relative size-3 rounded-full", meta.dot)} />
             </span>
-            <p className="text-lg font-medium">{meta.activity}</p>
+            <p className="text-lg font-medium">{headline}</p>
           </div>
           {status === "WRITING" ? (
             <NowLine label="Now · Write" text="Turning the findings into a report. Open the Report tab to read along." />
+          ) : status === "REVIEWING" ? (
+            <NowLine label="Now · Review" text="Checking coverage, depth, source diversity, recency, and bias." />
           ) : meta.live && activity.kind === "thinking" ? (
             <NowLine label="Now · Think" text="Deciding the next step…" />
           ) : meta.live && activity.kind === "tools" ? (
@@ -74,6 +86,15 @@ export function CurrentActivity({ status, steps, activity }: Props) {
             );
           })}
         </ol>
+
+        {review && (
+          <div className="flex flex-col gap-2">
+            <h3 className="font-mono text-[11px] tracking-widest text-muted-foreground uppercase">
+              Critic review {review.round}
+            </h3>
+            <ReviewCard review={review} />
+          </div>
+        )}
 
         {plan && (
           <div className="flex flex-col gap-4">

@@ -81,6 +81,10 @@ export function describeEvent(e: AgentEvent): string | null {
     }
     case "usage":
       return `   $${d.costUsd.toFixed(4)} total · cache read ${d.cacheReadTokens} / write ${d.cacheWriteTokens} / uncached ${d.inputTokens}`;
+    case "review": {
+      const verdict = d.approved ? "approved" : `${d.gaps.length} gaps: ${d.gaps.join(" | ")}`;
+      return `[review ${d.round}] ${d.qualityScore}/10 · ${verdict}`;
+    }
     case "report_ready":
       return `[report_ready] “${d.title}” · ${d.wordCount} words · ${d.sourceCount} sources`;
     case "thinking":

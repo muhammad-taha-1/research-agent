@@ -21,6 +21,8 @@ export interface SerializedMemory {
   findings: FindingSummary[];
   plan: ResearchPlan | null;
   lastEvaluation: Evaluation | null;
+  // Searches and page reads carried over from earlier rounds (see continueFrom)
+  inherited?: { searches: number; pagesRead: number };
 }
 
 type DedupTool = "web_search" | "read_webpage" | "save_finding";
@@ -89,6 +91,8 @@ export class AgentMemory {
   private findings: FindingSummary[] = [];
   private plan: ResearchPlan | null = null;
   private lastEvaluation: Evaluation | null = null;
+  // Work done by earlier rounds: still checked for repeats, but not counted as this run's
+  private inherited = { searches: 0, pagesRead: 0 };
 
   // Calls from one turn run in parallel, so checkDuplicate claims each call it lets
   // through and record releases it: a repeat of a call still running is caught too.
@@ -191,22 +195,24 @@ export class AgentMemory {
    * Seeds a NEW conversation (gap-fill round) and feeds the critic and writer.
    * Gives up detail level by level until it fits the token budget.
    */
-  buildContextSummary(opts: { maxTokens?: number } = {}): string {
+  buildContextSummary(opts: { maxTokens?: number; previewChars?: number } = {}): string {
     const maxTokens = opts.maxTokens ?? this.maxContextTokens;
     let summary = "";
     for (const level of [0, 1, 2] as const) {
-      summary = this.renderSummary(level);
+      summary = this.renderSummary(level, opts.previewChars ?? CONTENT_PREVIEW);
       if (estimateTokens(summary) <= maxTokens) return summary;
     }
     return `${summary.slice(0, maxTokens * 4).trimEnd()}\n…(summary truncated)`;
   }
 
+  /** Searches this run made (earlier rounds' don't count). */
   get searchCount(): number {
-    return this.searchQueries.length;
+    return this.searchQueries.length - this.inherited.searches;
   }
 
+  /** Pages this run read (earlier rounds' don't count). */
   get pagesRead(): number {
-    return this.readUrls.size;
+    return this.readUrls.size - this.inherited.pagesRead;
   }
 
   toJSON(): SerializedMemory {
@@ -216,7 +222,19 @@ export class AgentMemory {
       findings: this.findings,
       plan: this.plan,
       lastEvaluation: this.lastEvaluation,
+      inherited: this.inherited,
     };
+  }
+
+  /**
+   * Memory for the next round's run: everything earlier rounds did and found, so
+   * their searches, pages, and findings count as repeats, while this run's own
+   * search and read counts start at zero.
+   */
+  static continueFrom(previous: SerializedMemory): AgentMemory {
+    const memory = AgentMemory.fromJSON(previous);
+    memory.inherited = { searches: memory.searchQueries.length, pagesRead: memory.readUrls.size };
+    return memory;
   }
 
   static fromJSON(data: SerializedMemory): AgentMemory {
@@ -226,6 +244,7 @@ export class AgentMemory {
     memory.findings = data.findings ?? [];
     memory.plan = data.plan ?? null;
     memory.lastEvaluation = data.lastEvaluation ?? null;
+    memory.inherited = data.inherited ?? { searches: 0, pagesRead: 0 };
     return memory;
   }
 
@@ -249,7 +268,7 @@ export class AgentMemory {
 
   // Level 0: everything (findings decay past DECAY_AFTER). Level 1: findings always
   // decay, long lists keep their newest 30. Level 2: findings are titles only, lists keep 15.
-  private renderSummary(level: 0 | 1 | 2): string {
+  private renderSummary(level: 0 | 1 | 2, previewChars: number): string {
     const sections: string[] = [];
 
     if (this.plan) {
@@ -271,7 +290,7 @@ export class AgentMemory {
     const findingLines = this.findings.map((f, i) => {
       const source = f.sourceUrl ? `\n  Source: ${f.sourceUrl}` : "";
       const head = `- [${f.category || "general"}] ${f.title}`;
-      return full.has(i) ? `${head}: ${clip(f.content, CONTENT_PREVIEW)}${source}` : `${head}${source}`;
+      return full.has(i) ? `${head}: ${clip(f.content, previewChars)}${source}` : `${head}${source}`;
     });
     sections.push([`## Findings (${this.findings.length} total)`, ...findingLines].join("\n"));
 

@@ -1,10 +1,48 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Activity } from "lucide-react";
+import type { AgentRole } from "@/generated/prisma/enums";
+import { AGENT_META, runTitle } from "@/lib/research/steps";
+import { cn } from "@/lib/utils";
 import type { AgentStepView } from "@/types/research";
 import { Panel, PanelEmpty } from "./Panel";
 import { StepCard } from "./StepCard";
+
+interface RunGroup {
+  runId: string;
+  role: AgentRole;
+  round: number;
+  steps: AgentStepView[];
+}
+
+/** Consecutive steps of one run (steps arrive grouped by run already). */
+function groupByRun(steps: AgentStepView[]): RunGroup[] {
+  const groups: RunGroup[] = [];
+  for (const step of steps) {
+    const last = groups.at(-1);
+    if (last?.runId === step.runId) last.steps.push(step);
+    else groups.push({ runId: step.runId, role: step.agentRole, round: step.round, steps: [step] });
+  }
+  return groups;
+}
+
+const RUN_DETAIL: Partial<Record<AgentRole, (round: number) => string>> = {
+  RESEARCHER: (round) => (round > 1 ? `Round ${round} — filling gaps` : "Round 1"),
+  CRITIC: (round) => `Review of round ${round}`,
+  WRITER: () => "Writing the report",
+};
+
+function RunHeading({ role, round }: { role: AgentRole; round: number }) {
+  const meta = AGENT_META[role];
+  return (
+    <h3 className="mb-1 flex items-center gap-2 px-1 font-mono text-[11px] tracking-wider uppercase">
+      <span className={cn("size-1.5 shrink-0 rounded-full", meta.dot)} />
+      <span className={meta.text}>{meta.label}</span>
+      <span className="truncate text-muted-foreground normal-case tracking-normal">{RUN_DETAIL[role]?.(round)}</span>
+    </h3>
+  );
+}
 
 interface Props {
   steps: AgentStepView[];
@@ -34,6 +72,9 @@ export function ResearchTimeline({ steps, live }: Props) {
     if (el && following.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [steps.length]);
 
+  const groups = useMemo(() => groupByRun(steps), [steps]);
+  const lastId = steps.at(-1)?.id;
+
   return (
     <Panel title="Timeline" count={steps.length} countLabel="steps">
       <div ref={scrollerRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
@@ -42,11 +83,24 @@ export function ResearchTimeline({ steps, live }: Props) {
             Each search, page read, and note appears here as the agent works.
           </PanelEmpty>
         ) : (
-          <ol className="relative flex flex-col gap-1 before:absolute before:top-3 before:bottom-3 before:left-3 before:w-px before:bg-border">
-            {steps.map((step, i) => (
-              <StepCard key={step.id} step={step} active={live && i === steps.length - 1} />
+          <div className="flex flex-col gap-3">
+            {groups.map((group) => (
+              <section key={group.runId} aria-label={runTitle(group.role, group.round)}>
+                {groups.length > 1 && <RunHeading role={group.role} round={group.round} />}
+                {/* The rail takes the agent's color, so whose step it is shows at a glance */}
+                <ol
+                  className={cn(
+                    "relative flex flex-col gap-1 before:absolute before:top-3 before:bottom-3 before:left-3 before:w-px",
+                    groups.length > 1 ? AGENT_META[group.role].rail : "before:bg-border",
+                  )}
+                >
+                  {group.steps.map((step) => (
+                    <StepCard key={step.id} step={step} active={live && step.id === lastId} />
+                  ))}
+                </ol>
+              </section>
             ))}
-          </ol>
+          </div>
         )}
       </div>
     </Panel>
