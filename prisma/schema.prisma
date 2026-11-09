@@ -127,8 +127,22 @@ model AgentRun {
   // Why it ended: "agent_done", "max_steps", "budget", "timeout", "user_stop", "refusal", ...
   endReason             String?
   error                 String?         @db.Text
+  errorType             ErrorType? // set when the run itself failed (API error, refusal, ...)
 
   @@index([projectId])
+}
+
+// What kind of failure a step or run hit, for the error distribution (Phase 14)
+enum ErrorType {
+  NETWORK_ERROR // timeouts, DNS, connection failures, 5xx from a site
+  RATE_LIMIT // 429 from the API, a site, or the search provider
+  PARSE_ERROR // invalid tool input, or model output that didn't parse
+  CONTEXT_OVERFLOW // the prompt outgrew the context window
+  TOOL_ERROR // a tool failed for any other reason (404, no readable text, ...)
+  URL_BLOCKED // the SSRF guard refused the URL, or the site refused us (401/403/451)
+  REFUSAL // the model declined
+  MAX_TOKENS // the response hit max_tokens
+  API_ERROR // any other Claude API error (overloaded, invalid request, ...)
 }
 
 enum RunStatus {
@@ -160,12 +174,20 @@ model AgentStep {
   toolInput    Json? // tool input parameters
   toolResult   Json? // what the tool returned
   // Metadata
-  duration     Int? // milliseconds this step took
-  inputTokens  Int?
-  outputTokens Int?
-  status       StepStatus @default(RUNNING)
-  error        String?    @db.Text
-  createdAt    DateTime   @default(now())
+  duration         Int? // ms the tool call (or critic/writer call) took
+  // The model call's usage. One call can produce several steps, so it's attached
+  // to the first step saved after the call (the "turn"); the others leave it null.
+  model            String? // the model that served the call (differs after a fallback)
+  modelDuration    Int? // ms the model call took
+  inputTokens      Int? // the whole prompt: uncached + cache reads + cache writes
+  outputTokens     Int? // includes thinking
+  cacheReadTokens  Int?
+  cacheWriteTokens Int?
+  costUsd          Float?
+  status           StepStatus @default(RUNNING)
+  error            String?    @db.Text
+  errorType        ErrorType?
+  createdAt        DateTime   @default(now())
 
   @@index([runId])
 }

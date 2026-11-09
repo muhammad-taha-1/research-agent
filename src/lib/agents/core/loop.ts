@@ -1,8 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Prisma } from "@/generated/prisma/client";
-import type { RunStatus, StepStatus, StepType } from "@/generated/prisma/enums";
+import type { ErrorType, RunStatus, StepStatus, StepType } from "@/generated/prisma/enums";
 import { AGENT_BETAS, anthropic } from "@/lib/ai/anthropic";
 import { calculateCost, type TokenUsage } from "@/lib/ai/pricing";
+import { categorizeApiError, categorizeStopReason } from "@/lib/observability/errors";
+import { logAgentAction, logStep } from "@/lib/observability/log";
 import {
   hasPendingRedirects,
   readControlSignals,
@@ -65,8 +67,19 @@ interface RunContext {
   state: AgentState;
   tools: ToolRegistry;
   emit: EmitFn;
-  // This turn's token usage, attached to the first step saved after the model call
-  pendingUsage: { inputTokens: number; outputTokens: number } | null;
+  // This turn's usage, attached to the first step saved after the model call
+  pendingUsage: TurnUsage | null;
+}
+
+/** One model call's usage, as stored on the step that carries it. */
+export interface TurnUsage {
+  model: string; // the model that served it
+  modelDuration?: number; // ms
+  inputTokens: number; // the whole prompt
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
 }
 
 interface StepInput {
@@ -79,6 +92,7 @@ interface StepInput {
   duration?: number;
   status?: StepStatus;
   error?: string;
+  errorType?: ErrorType;
 }
 
 export function event(type: AgentEventType, data: unknown): AgentEvent {
@@ -112,6 +126,7 @@ export async function runAgentLoop(
     await emit(event("thinking", { stepNumber: state.stepNumber + 1 }));
 
     let response: Anthropic.Beta.BetaMessage;
+    const callStarted = Date.now();
     try {
       response = await anthropic.beta.messages.create({
         model: config.model,
@@ -128,11 +143,13 @@ export async function runAgentLoop(
       });
     } catch (error) {
       // The SDK already retried 429/5xx; what's left won't fix itself by looping
-      if (error instanceof Anthropic.APIError) return endRun(ctx, "ERROR", "api_error", error.message);
+      if (error instanceof Anthropic.APIError) {
+        return endRun(ctx, "ERROR", "api_error", error.message, categorizeApiError(error));
+      }
       throw error;
     }
 
-    await recordUsage(ctx, response);
+    await recordUsage(ctx, response, Date.now() - callStarted);
 
     // ---- OBSERVE: put the reasoning on the timeline ----
     for (const block of response.content) {
@@ -142,13 +159,13 @@ export async function runAgentLoop(
     }
 
     // ---- Stop reasons to handle BEFORE running anything ----
-    if (response.stop_reason === "refusal") {
-      return endRun(ctx, "ERROR", "refusal", response.stop_details?.explanation ?? undefined);
-    }
-    if (response.stop_reason === "max_tokens") {
-      // A tool_use cut off mid-input must not run or be appended (it would never
-      // get a tool_result). If you see this, raise maxTokensPerStep.
-      return endRun(ctx, "ERROR", "max_tokens");
+    // refusal: the whole fallback chain declined. max_tokens / context window: a
+    // tool_use cut off mid-input must not run or be appended (it would never get a
+    // tool_result). If you see max_tokens, raise maxTokensPerStep.
+    const stopError = categorizeStopReason(response.stop_reason);
+    if (stopError) {
+      const explanation = response.stop_details?.explanation ?? undefined;
+      return endRun(ctx, "ERROR", response.stop_reason!, explanation, stopError);
     }
 
     state.messages.push({ role: "assistant", content: response.content }); // the WHOLE turn
@@ -173,7 +190,7 @@ export async function runAgentLoop(
     await checkpoint(ctx);
 
     if (state.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-      return endRun(ctx, "ERROR", "consecutive_errors");
+      return endRun(ctx, "ERROR", "consecutive_errors", undefined, "TOOL_ERROR");
     }
     if (state.doneRequested) {
       // An instruction that arrived as the agent wrapped up still gets applied: the
@@ -253,6 +270,7 @@ async function runToolCall(
     duration: Date.now() - started,
     status: result.success ? "COMPLETED" : "ERROR",
     error: result.error,
+    errorType: result.success ? undefined : (result.errorType ?? "TOOL_ERROR"),
   });
   // A duplicate finding wasn't saved, so there's nothing to show
   if (call.name === "save_finding" && result.success && !isDuplicate(result)) await emit(event("finding", result.data));
@@ -285,7 +303,7 @@ function toJson(value: unknown): Prisma.InputJsonValue | undefined {
   return value === undefined ? undefined : (JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue);
 }
 
-/** Writes an AgentStep row and emits it as `step_complete`. */
+/** Writes an AgentStep row, logs it, and emits it as `step_complete`. */
 async function saveAndEmitStep(ctx: RunContext, step: StepInput): Promise<void> {
   const usage = ctx.pendingUsage;
   ctx.pendingUsage = null;
@@ -300,23 +318,44 @@ async function saveAndEmitStep(ctx: RunContext, step: StepInput): Promise<void> 
       toolInput: toJson(step.toolInput),
       toolResult: toJson(step.toolResult),
       duration: step.duration,
-      inputTokens: usage?.inputTokens,
-      outputTokens: usage?.outputTokens,
+      ...usage,
       status: step.status ?? "COMPLETED",
       error: step.error,
+      errorType: step.errorType,
     },
   });
-  await ctx.emit(event("step_complete", toStepView(row, { agentRole: ctx.config.role, round: ctx.state.round })));
+  const run = { projectId: ctx.state.projectId, agentRole: ctx.config.role, round: ctx.state.round };
+  logStep(row, run);
+  await ctx.emit(event("step_complete", toStepView(row, run)));
 }
 
-/** Attaches this turn's tokens to the next step, and adds them to the run's totals. */
-async function recordUsage(ctx: RunContext, response: Anthropic.Beta.BetaMessage): Promise<void> {
+/** Attaches this turn's usage to the next step, and adds it to the run's totals. */
+async function recordUsage(
+  ctx: RunContext,
+  response: Anthropic.Beta.BetaMessage,
+  modelDuration: number,
+): Promise<void> {
+  const costUsd = await recordRunUsage(ctx.state.runId, response, ctx.emit);
+  ctx.state.costUsd += costUsd;
+  ctx.pendingUsage = turnUsage(response, costUsd, modelDuration);
+}
+
+/** The step fields for one model call's usage. */
+export function turnUsage(
+  response: { model: string; usage: TokenUsage },
+  costUsd: number,
+  modelDuration?: number,
+): TurnUsage {
   const { usage } = response;
-  ctx.pendingUsage = {
+  return {
+    model: response.model,
+    modelDuration,
     inputTokens: promptTokens(usage),
     outputTokens: usage.output_tokens,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+    costUsd,
   };
-  ctx.state.costUsd += await recordRunUsage(ctx.state.runId, response, ctx.emit);
 }
 
 /** The whole prompt, cached or not. */
@@ -368,6 +407,7 @@ async function endRun(
   outcome: Exclude<RunOutcome, "PAUSED">,
   reason: string,
   error?: string,
+  errorType?: ErrorType,
 ): Promise<RunOutcome> {
   const { state, config, emit } = ctx;
   await prisma.agentRun.update({
@@ -376,8 +416,21 @@ async function endRun(
       status: RUN_STATUS[outcome],
       endReason: reason,
       error: error ?? null,
+      errorType: errorType ?? null,
       completedAt: new Date(),
     },
+  });
+  logAgentAction({
+    projectId: state.projectId,
+    runId: state.runId,
+    agent: config.role,
+    round: state.round,
+    type: "RUN_END",
+    status: RUN_STATUS[outcome],
+    endReason: reason,
+    error,
+    errorType,
+    costUsd: state.costUsd,
   });
 
   const data = { runId: state.runId, role: config.role, outcome, reason, error };

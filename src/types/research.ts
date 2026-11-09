@@ -1,7 +1,9 @@
 import type {
   AgentRole,
+  ErrorType,
   ProjectStatus,
   ResearchDepth,
+  RunStatus,
   StepStatus,
   StepType,
 } from "@/generated/prisma/enums";
@@ -21,12 +23,43 @@ export interface AgentStepView {
   toolName: string | null;
   toolInput: unknown;
   toolResult: unknown;
-  duration: number | null; // ms
-  inputTokens: number | null;
+  duration: number | null; // ms the tool call (or critic/writer call) took
+  // The model call ("turn") that led to this step; only the turn's first step has it
+  model: string | null; // the model that served it
+  modelDuration: number | null; // ms
+  inputTokens: number | null; // the whole prompt, cached or not
   outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  costUsd: number | null;
   status: StepStatus;
   error: string | null;
+  errorType: ErrorType | null;
   createdAt: string;
+}
+
+/** One agent run: a researcher round, a critic review, or a report. */
+export interface RunSummaryView {
+  id: string;
+  agentRole: AgentRole;
+  round: number;
+  status: RunStatus;
+  model: string; // the model requested; steps say which one served each call
+  startedAt: string;
+  completedAt: string | null;
+  endReason: string | null;
+  error: string | null;
+  errorType: ErrorType | null;
+  stepCount: number;
+}
+
+/** The run debugger's data: one run with every step, and its project's other runs. */
+export interface RunDetail {
+  project: { id: string; title: string; status: ProjectStatus };
+  run: RunSummaryView;
+  usage: UsageView;
+  steps: AgentStepView[];
+  runs: RunSummaryView[]; // every run of the project, in order, to move between them
 }
 
 export interface FindingView {
@@ -97,6 +130,7 @@ export interface ProjectDetail {
   usage: UsageView; // all runs together
   runUsage: Record<string, UsageView>; // by run id: a `usage` event replaces one entry
   runRoles: Record<string, AgentRole>; // by run id, for the per-agent cost breakdown
+  runs: RunSummaryView[]; // as of the snapshot (router.refresh updates it when a run ends)
   report: ReportDetail | null; // the saved report; a `report_ready` event carries a newer one
   reportDraft: ReportDraft | null; // text streamed so far while the writer runs
 }

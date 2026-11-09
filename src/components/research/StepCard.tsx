@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { ChevronRight, ExternalLink, ShieldAlert, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatDuration, hostname } from "@/lib/format";
+import { formatCost, formatDuration, formatPercent, formatTokens, hostname } from "@/lib/format";
+import { cacheHitRate, ERROR_META } from "@/lib/research/analytics";
 import { STEP_META, field, formatScore, resultCount, reviewOf, summarizeStep } from "@/lib/research/steps";
 import type { AgentStepView, CriticReviewView } from "@/types/research";
 
@@ -106,14 +107,18 @@ export function ReviewCard({ review, className }: { review: CriticReviewView; cl
   );
 }
 
-function StepDetails({ step }: { step: AgentStepView }) {
+export function StepDetails({ step }: { step: AgentStepView }) {
   const input = step.toolInput;
   const result = step.toolResult;
   const review = reviewOf(step);
 
   return (
     <>
-      {step.error && <Detail label="Error" className="text-destructive">{step.error}</Detail>}
+      {step.error && (
+        <Detail label={`Error · ${ERROR_META[step.errorType ?? "OTHER"].label}`} className="text-destructive">
+          {step.error}
+        </Detail>
+      )}
 
       {step.type === "SEARCH" && (
         <Detail label="Query">
@@ -167,12 +172,26 @@ function StepDetails({ step }: { step: AgentStepView }) {
         </Detail>
       )}
 
-      {(step.inputTokens != null || step.outputTokens != null) && (
-        <p className="font-mono text-[11px] text-muted-foreground">
-          {step.inputTokens ?? 0} in · {step.outputTokens ?? 0} out tokens
-        </p>
-      )}
+      <UsageLine step={step} />
     </>
+  );
+}
+
+/** The model call behind this step's turn: model, tokens with the cache split, cost, time. */
+function UsageLine({ step }: { step: AgentStepView }) {
+  if (step.inputTokens == null && step.outputTokens == null) return null;
+  const hit = cacheHitRate(step);
+  const parts = [
+    step.model,
+    `${formatTokens(step.inputTokens ?? 0)} in${hit != null && step.cacheReadTokens != null ? ` (${formatPercent(hit)} cached)` : ""}`,
+    `${formatTokens(step.outputTokens ?? 0)} out`,
+    step.costUsd != null && formatCost(step.costUsd),
+    step.modelDuration != null && `model ${formatDuration(step.modelDuration)}`,
+  ].filter(Boolean);
+  return (
+    <p className="font-mono text-[11px] text-muted-foreground" title="This turn's model call">
+      {parts.join(" · ")}
+    </p>
   );
 }
 

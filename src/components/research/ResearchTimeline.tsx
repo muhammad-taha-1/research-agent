@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { Activity } from "lucide-react";
+import Link from "next/link";
+import { Activity, Bug } from "lucide-react";
 import type { AgentRole } from "@/generated/prisma/enums";
 import { AGENT_META, runTitle } from "@/lib/research/steps";
 import { cn } from "@/lib/utils";
@@ -33,24 +34,33 @@ const RUN_DETAIL: Partial<Record<AgentRole, (round: number) => string>> = {
   WRITER: () => "Writing the report",
 };
 
-function RunHeading({ role, round }: { role: AgentRole; round: number }) {
+function RunHeading({ role, round, href }: { role: AgentRole; round: number; href: string }) {
   const meta = AGENT_META[role];
   return (
     <h3 className="mb-1 flex items-center gap-2 px-1 font-mono text-[11px] tracking-wider uppercase">
       <span className={cn("size-1.5 shrink-0 rounded-full", meta.dot)} />
       <span className={meta.text}>{meta.label}</span>
       <span className="truncate text-muted-foreground normal-case tracking-normal">{RUN_DETAIL[role]?.(round)}</span>
+      <Link
+        href={href}
+        className="ml-auto inline-flex shrink-0 items-center gap-1 text-muted-foreground normal-case tracking-normal hover:text-foreground"
+        title="Open this run in the debugger"
+      >
+        <Bug className="size-3" />
+        Debug
+      </Link>
     </h3>
   );
 }
 
 interface Props {
+  projectId: string;
   steps: AgentStepView[];
   /** The agent is working: the newest step pulses. */
   live: boolean;
 }
 
-export function ResearchTimeline({ steps, live }: Props) {
+export function ResearchTimeline({ projectId, steps, live }: Props) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   // Follow new steps until the reader scrolls up; scrolling back to the bottom resumes it.
   // Decided from the reader's scrolling, not measured after new steps render: by then
@@ -86,7 +96,12 @@ export function ResearchTimeline({ steps, live }: Props) {
           <div className="flex flex-col gap-3">
             {groups.map((group) => (
               <section key={group.runId} aria-label={runTitle(group.role, group.round)}>
-                {groups.length > 1 && <RunHeading role={group.role} round={group.round} />}
+                <RunHeading
+                  role={group.role}
+                  round={group.round}
+                  href={`/research/${projectId}/runs/${group.runId}`}
+                />
+
                 {/* The rail takes the agent's color, so whose step it is shows at a glance */}
                 <ol
                   className={cn(

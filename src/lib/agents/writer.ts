@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Finding, Prisma } from "@/generated/prisma/client";
-import type { StepStatus } from "@/generated/prisma/enums";
+import type { ErrorType, StepStatus } from "@/generated/prisma/enums";
 import { anthropic, MODELS } from "@/lib/ai/anthropic";
 import { REPORT_WRITER_PROMPT } from "@/lib/ai/prompts";
 import { readControlSignals } from "@/lib/control/signals";
@@ -10,7 +10,9 @@ import { toReportDetail, toStepView } from "@/lib/research/queries";
 import { countWords, extractSummary, extractTitle, parseReportSections } from "@/lib/research/report";
 import { appendReportDraft } from "@/lib/stream/report-draft";
 import type { ReportSection } from "@/types/research";
-import { event, promptTokens, recordRunUsage } from "./core/loop";
+import { categorizeApiError, categorizeStopReason } from "@/lib/observability/errors";
+import { logStep } from "@/lib/observability/log";
+import { event, recordRunUsage, turnUsage } from "./core/loop";
 import type { EmitFn } from "./core/types";
 
 // The writer turns the project's findings into a markdown report in ONE streamed
@@ -156,15 +158,23 @@ export async function runWriterRun(projectId: string, emit: EmitFn, jobId?: stri
   const finish = async (
     outcome: WriterOutcome,
     reason: string,
-    step: { status: StepStatus; result?: unknown; error?: string; response?: Anthropic.Beta.BetaMessage },
+    step: {
+      status: StepStatus;
+      result?: unknown;
+      error?: string;
+      errorType?: ErrorType;
+      response?: Anthropic.Beta.BetaMessage;
+    },
   ): Promise<WriterOutcome> => {
-    if (step.response) await recordRunUsage(run.id, step.response, emit);
+    const duration = Date.now() - started;
+    const costUsd = step.response ? await recordRunUsage(run.id, step.response, emit) : 0;
     await prisma.agentRun.update({
       where: { id: run.id },
       data: {
         status: outcome,
         endReason: reason,
         error: step.error ?? null,
+        errorType: step.errorType ?? null,
         completedAt: new Date(),
       },
     });
@@ -174,13 +184,14 @@ export async function runWriterRun(projectId: string, emit: EmitFn, jobId?: stri
         stepNumber: 1,
         type: "WRITE",
         toolResult: step.result as Prisma.InputJsonValue | undefined,
-        duration: Date.now() - started,
-        inputTokens: step.response && promptTokens(step.response.usage),
-        outputTokens: step.response?.usage.output_tokens,
+        duration,
+        ...(step.response && turnUsage(step.response, costUsd, duration)),
         status: step.status,
         error: step.error,
+        errorType: step.errorType,
       },
     });
+    logStep(row, run);
     await emit(event("step_complete", toStepView(row, run)));
     const data = { runId: run.id, role: "WRITER", outcome, reason, error: step.error };
     await emit(event(outcome === "ERROR" ? "agent_error" : "agent_done", data));
@@ -254,11 +265,12 @@ export async function runWriterRun(projectId: string, emit: EmitFn, jobId?: stri
     if (abort.signal.aborted) return finish("STOPPED", "user_stop", { status: "SKIPPED" });
     if (error instanceof ReportGenerationError) {
       const reason = error.response.stop_reason ?? "error";
-      return finish("ERROR", reason, { status: "ERROR", error: error.message, response: error.response });
+      const errorType = categorizeStopReason(error.response.stop_reason) ?? undefined;
+      return finish("ERROR", reason, { status: "ERROR", error: error.message, errorType, response: error.response });
     }
     // The SDK already retried 429/5xx; what's left won't fix itself
     if (error instanceof Anthropic.APIError) {
-      return finish("ERROR", "api_error", { status: "ERROR", error: error.message });
+      return finish("ERROR", "api_error", { status: "ERROR", error: error.message, errorType: categorizeApiError(error) });
     }
     throw error; // unexpected: the worker's failed handler records it
   } finally {

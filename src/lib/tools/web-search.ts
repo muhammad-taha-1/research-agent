@@ -1,6 +1,6 @@
 import { tavily, type TavilyClient } from "@tavily/core";
 import { z } from "zod";
-import { defineTool, fail, ok } from "@/lib/agents/core/types";
+import { defineTool, fail, ok, type ToolResult } from "@/lib/agents/core/types";
 
 const DEFAULT_RESULTS = 5;
 const MAX_RESULTS = 10;
@@ -57,23 +57,26 @@ export const webSearchTool = defineTool({
       }
       return ok({ query, results });
     } catch (error) {
-      return fail(describeSearchError(error));
+      return searchFailure(error);
     }
   },
 });
 
 // @tavily/core throws plain Errors carrying the HTTP status or Tavily's detail
 // message, so the message text is all there is to classify on.
-function describeSearchError(error: unknown): string {
+function searchFailure(error: unknown): ToolResult {
   const message = error instanceof Error ? error.message : String(error);
   if (/\b(429|432|433)\b|rate limit|usage limit|exceeds your plan/i.test(message)) {
-    return `Search rate limit or quota reached (${message}). Wait before searching again, or continue with the sources you already have.`;
+    return fail(
+      `Search rate limit or quota reached (${message}). Wait before searching again, or continue with the sources you already have.`,
+      "RATE_LIMIT",
+    );
   }
   if (/timed out/i.test(message)) {
-    return "Search timed out. Retry once, or rephrase the query.";
+    return fail("Search timed out. Retry once, or rephrase the query.", "NETWORK_ERROR");
   }
   if (/\b401\b|unauthorized|invalid api key|TAVILY_API_KEY/i.test(message)) {
-    return `Search is not configured correctly (${message}). Web search is unavailable for this run.`;
+    return fail(`Search is not configured correctly (${message}). Web search is unavailable for this run.`);
   }
-  return `Search failed: ${message}`;
+  return fail(`Search failed: ${message}`, /fetch failed|ECONN|ENOTFOUND|EAI_AGAIN/i.test(message) ? "NETWORK_ERROR" : undefined);
 }

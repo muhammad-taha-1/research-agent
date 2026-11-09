@@ -37,7 +37,7 @@ export class ToolRegistry {
 
     const parsed = tool.inputSchema.safeParse(input);
     if (!parsed.success) {
-      return fail(`Invalid input for ${name}:\n${z.prettifyError(parsed.error)}`);
+      return fail(`Invalid input for ${name}:\n${z.prettifyError(parsed.error)}`, "PARSE_ERROR");
     }
 
     try {

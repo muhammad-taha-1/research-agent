@@ -2,6 +2,7 @@ import { Readability } from "@mozilla/readability";
 import * as cheerio from "cheerio";
 import { JSDOM, VirtualConsole } from "jsdom";
 import { z } from "zod";
+import type { ErrorType } from "@/generated/prisma/enums";
 import { defineTool, fail, ok } from "@/lib/agents/core/types";
 import { assertSafeUrl, UnsafeUrlError } from "./url-safety";
 
@@ -48,7 +49,10 @@ export const webReadTool = defineTool({
         const hint = [401, 403, 429].includes(response.status)
           ? " The site may block automated readers; try another source."
           : "";
-        return fail(`HTTP ${response.status} ${response.statusText} from ${finalUrl.href}.${hint}`.trim());
+        return fail(
+          `HTTP ${response.status} ${response.statusText} from ${finalUrl.href}.${hint}`.trim(),
+          httpErrorType(response.status),
+        );
       }
 
       const contentType = response.headers.get("content-type") ?? "";
@@ -74,7 +78,7 @@ export const webReadTool = defineTool({
         extraction: page.extraction,
       });
     } catch (error) {
-      return fail(describeReadError(error));
+      return fail(describeReadError(error), readErrorType(error));
     }
   },
 });
@@ -214,6 +218,21 @@ function truncateWords(text: string, max: number) {
     wordCount,
     truncated,
   };
+}
+
+/** The site refused us (blocked), throttled us, or broke; anything else (404, ...) is the tool's. */
+function httpErrorType(status: number): ErrorType {
+  if ([401, 403, 451].includes(status)) return "URL_BLOCKED";
+  if (status === 429) return "RATE_LIMIT";
+  if (status >= 500) return "NETWORK_ERROR";
+  return "TOOL_ERROR";
+}
+
+/** Mirrors describeReadError. */
+function readErrorType(error: unknown): ErrorType {
+  if (error instanceof UnsafeUrlError) return "URL_BLOCKED";
+  if (error instanceof TooLargeError) return "TOOL_ERROR";
+  return "NETWORK_ERROR"; // timeouts, DNS, connection failures, too many redirects
 }
 
 function describeReadError(error: unknown): string {

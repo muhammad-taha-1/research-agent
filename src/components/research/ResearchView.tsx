@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Activity, ArrowLeft, Bookmark, Clock, FileText, Footprints, Radar } from "lucide-react";
+import { Activity, ArrowLeft, BarChart3, Bookmark, Clock, FileText, Footprints, Radar } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNow } from "@/hooks/useNow";
 import { useResearchStream, type StreamConnection } from "@/hooks/useResearchStream";
@@ -17,6 +17,7 @@ import { AgentControls } from "./AgentControls";
 import { CostTracker } from "./CostTracker";
 import { CurrentActivity } from "./CurrentActivity";
 import { FindingsPanel } from "./FindingsPanel";
+import { ProjectAnalytics } from "./ProjectAnalytics";
 import { ReportView } from "./ReportView";
 import { ResearchTimeline } from "./ResearchTimeline";
 import { StatusBadge } from "./StatusBadge";
@@ -43,7 +44,8 @@ export function ResearchView({ project: snapshot, position }: { project: Project
     }
   }
 
-  const timeline = <ResearchTimeline steps={project.steps} live={live} />;
+  const timeline = <ResearchTimeline projectId={project.id} steps={project.steps} live={live} />;
+  const analytics = <ProjectAnalytics project={project} live={live} />;
   const activity = (
     <CurrentActivity status={project.status} round={project.round} steps={project.steps} activity={liveActivity} />
   );
@@ -61,7 +63,7 @@ export function ResearchView({ project: snapshot, position }: { project: Project
   const reportLabel = (
     <>
       <FileText />
-      Report
+      <span className={MOBILE_LABEL}>Report</span>
       {writing && <span className="size-1.5 animate-pulse rounded-full bg-fuchsia-400" aria-label="being written" />}
     </>
   );
@@ -109,7 +111,7 @@ export function ResearchView({ project: snapshot, position }: { project: Project
         </div>
       </header>
 
-      <CostTracker usage={project.usage} runUsage={project.runUsage} runRoles={project.runRoles} />
+      <CostTracker usage={project.usage} runUsage={project.runUsage} runRoles={project.runRoles} steps={project.steps} />
       <AgentControls
         projectId={project.id}
         status={project.status}
@@ -132,6 +134,10 @@ export function ResearchView({ project: snapshot, position }: { project: Project
           <TabsTrigger value="report" className="px-3">
             {reportLabel}
           </TabsTrigger>
+          <TabsTrigger value="analytics" className="px-3">
+            <BarChart3 />
+            Analytics
+          </TabsTrigger>
         </TabsList>
         <TabsContent
           value="research"
@@ -144,34 +150,48 @@ export function ResearchView({ project: snapshot, position }: { project: Project
         <TabsContent value="report" className="flex min-h-0 flex-col data-[hidden]:hidden">
           {report}
         </TabsContent>
+        <TabsContent value="analytics" className="min-h-0 overflow-y-auto data-[hidden]:hidden">
+          {analytics}
+        </TabsContent>
       </Tabs>
 
       {/* Mobile: one panel at a time */}
       <Tabs value={mobileTab} onValueChange={(v) => setMobileTab(String(v))} className="lg:hidden">
+        {/* Five tabs don't fit a phone with labels: there only the open tab shows its label */}
         <TabsList className="w-full">
-          <TabsTrigger value="timeline">
+          <TabsTrigger value="timeline" aria-label="Timeline" className="group/tab">
             <Activity />
-            Timeline
+            <span className={MOBILE_LABEL}>Timeline</span>
           </TabsTrigger>
-          <TabsTrigger value="activity">
+          <TabsTrigger value="activity" aria-label="Status" className="group/tab">
             <Radar />
-            Status
+            <span className={MOBILE_LABEL}>Status</span>
           </TabsTrigger>
-          <TabsTrigger value="findings">
+          <TabsTrigger value="findings" aria-label={`Findings (${project.findings.length})`} className="group/tab">
             <Bookmark />
-            Findings
+            <span className={MOBILE_LABEL}>Findings</span>
             {project.findings.length > 0 && <span className="font-mono text-xs">{project.findings.length}</span>}
           </TabsTrigger>
-          <TabsTrigger value="report">{reportLabel}</TabsTrigger>
+          <TabsTrigger value="report" aria-label="Report" className="group/tab">
+            {reportLabel}
+          </TabsTrigger>
+          <TabsTrigger value="analytics" aria-label="Analytics" className="group/tab">
+            <BarChart3 />
+            <span className={MOBILE_LABEL}>Analytics</span>
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="timeline" className="flex h-[70svh] flex-col">{timeline}</TabsContent>
         <TabsContent value="activity" className="flex h-[70svh] flex-col">{activity}</TabsContent>
         <TabsContent value="findings" className="flex h-[70svh] flex-col">{findings}</TabsContent>
         <TabsContent value="report" className="flex h-[70svh] flex-col">{report}</TabsContent>
+        <TabsContent value="analytics">{analytics}</TabsContent>
       </Tabs>
     </div>
   );
 }
+
+// A tab label hidden on phones unless its tab is open (the group variant outranks max-sm:hidden)
+const MOBILE_LABEL = "max-sm:hidden max-sm:group-data-active/tab:inline";
 
 // Which agent is working while the project is in each status
 const AGENT_BY_STATUS: Partial<Record<ProjectStatus, AgentRole>> = {

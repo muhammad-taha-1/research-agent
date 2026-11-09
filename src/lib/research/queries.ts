@@ -10,6 +10,8 @@ import type {
   ProjectSummary,
   ReportDetail,
   ReportSection,
+  RunDetail,
+  RunSummaryView,
   UsageView,
 } from "@/types/research";
 
@@ -95,8 +97,52 @@ export async function getProjectDetail(id: string, userId: string): Promise<Proj
     usage: sumUsage(runs.map(toUsageView)),
     runUsage: Object.fromEntries(runs.map((r) => [r.id, toUsageView(r)])),
     runRoles: Object.fromEntries(runs.map((r) => [r.id, r.agentRole])),
+    runs: runs.map((r) => toRunSummary(r, r.steps.length)),
     report: project.report && toReportDetail(project.report),
     reportDraft: null, // read from Redis by the page, only while the writer runs
+  };
+}
+
+/** One run with all its steps, for the run debugger. Null when it isn't the user's. */
+export async function getRunDetail(projectId: string, runId: string, userId: string): Promise<RunDetail | null> {
+  const run = await prisma.agentRun.findFirst({
+    where: { id: runId, projectId, project: { userId } },
+    include: {
+      steps: { orderBy: { stepNumber: "asc" } },
+      project: {
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          runs: { orderBy: { startedAt: "asc" }, include: { _count: { select: { steps: true } } } },
+        },
+      },
+    },
+  });
+  if (!run) return null;
+  const { project } = run;
+  return {
+    project: { id: project.id, title: project.title, status: project.status },
+    run: toRunSummary(run, run.steps.length),
+    usage: toUsageView(run),
+    steps: run.steps.map((s) => toStepView(s, run)),
+    runs: project.runs.map((r) => toRunSummary(r, r._count.steps)),
+  };
+}
+
+export function toRunSummary(r: AgentRun, stepCount: number): RunSummaryView {
+  return {
+    id: r.id,
+    agentRole: r.agentRole,
+    round: r.round,
+    status: r.status,
+    model: r.model,
+    startedAt: r.startedAt.toISOString(),
+    completedAt: r.completedAt?.toISOString() ?? null,
+    endReason: r.endReason,
+    error: r.error,
+    errorType: r.errorType,
+    stepCount,
   };
 }
 
@@ -114,10 +160,16 @@ export function toStepView(s: AgentStep, run: { agentRole: AgentRole; round: num
     toolInput: s.toolInput,
     toolResult: s.toolResult,
     duration: s.duration,
+    model: s.model,
+    modelDuration: s.modelDuration,
     inputTokens: s.inputTokens,
     outputTokens: s.outputTokens,
+    cacheReadTokens: s.cacheReadTokens,
+    cacheWriteTokens: s.cacheWriteTokens,
+    costUsd: s.costUsd,
     status: s.status,
     error: s.error,
+    errorType: s.errorType,
     createdAt: s.createdAt.toISOString(),
   };
 }

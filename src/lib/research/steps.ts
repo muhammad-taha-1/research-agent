@@ -16,16 +16,17 @@ import type { AgentStepView, CriticReviewView } from "@/types/research";
 
 // Color is identity for the icon mark only; step text stays in text tokens.
 // Spec palette: blue search, green read, yellow think, purple note.
-export const STEP_META: Record<StepType, { label: string; icon: LucideIcon; tone: string }> = {
-  SEARCH: { label: "Search", icon: Search, tone: "text-sky-400 bg-sky-400/10 ring-sky-400/30" },
-  READ: { label: "Read", icon: FileText, tone: "text-emerald-400 bg-emerald-400/10 ring-emerald-400/30" },
-  THINK: { label: "Think", icon: Brain, tone: "text-amber-300 bg-amber-300/10 ring-amber-300/30" },
-  NOTE: { label: "Note", icon: Bookmark, tone: "text-violet-400 bg-violet-400/10 ring-violet-400/30" },
-  PLAN: { label: "Plan", icon: ListChecks, tone: "text-cyan-300 bg-cyan-300/10 ring-cyan-300/30" },
-  EVALUATE: { label: "Evaluate", icon: Gauge, tone: "text-teal-300 bg-teal-300/10 ring-teal-300/30" },
-  REDIRECT: { label: "Redirect", icon: CornerDownRight, tone: "text-orange-400 bg-orange-400/10 ring-orange-400/30" },
-  REVIEW: { label: "Review", icon: ShieldCheck, tone: "text-rose-400 bg-rose-400/10 ring-rose-400/30" },
-  WRITE: { label: "Write", icon: PenLine, tone: "text-fuchsia-400 bg-fuchsia-400/10 ring-fuchsia-400/30" },
+// `edge` color-codes a row by type in the run debugger (always next to the icon + label).
+export const STEP_META: Record<StepType, { label: string; icon: LucideIcon; tone: string; edge: string }> = {
+  SEARCH: { label: "Search", icon: Search, tone: "text-sky-400 bg-sky-400/10 ring-sky-400/30", edge: "border-l-sky-400/70" },
+  READ: { label: "Read", icon: FileText, tone: "text-emerald-400 bg-emerald-400/10 ring-emerald-400/30", edge: "border-l-emerald-400/70" },
+  THINK: { label: "Think", icon: Brain, tone: "text-amber-300 bg-amber-300/10 ring-amber-300/30", edge: "border-l-amber-300/70" },
+  NOTE: { label: "Note", icon: Bookmark, tone: "text-violet-400 bg-violet-400/10 ring-violet-400/30", edge: "border-l-violet-400/70" },
+  PLAN: { label: "Plan", icon: ListChecks, tone: "text-cyan-300 bg-cyan-300/10 ring-cyan-300/30", edge: "border-l-cyan-300/70" },
+  EVALUATE: { label: "Evaluate", icon: Gauge, tone: "text-teal-300 bg-teal-300/10 ring-teal-300/30", edge: "border-l-teal-300/70" },
+  REDIRECT: { label: "Redirect", icon: CornerDownRight, tone: "text-orange-400 bg-orange-400/10 ring-orange-400/30", edge: "border-l-orange-400/70" },
+  REVIEW: { label: "Review", icon: ShieldCheck, tone: "text-rose-400 bg-rose-400/10 ring-rose-400/30", edge: "border-l-rose-400/70" },
+  WRITE: { label: "Write", icon: PenLine, tone: "text-fuchsia-400 bg-fuchsia-400/10 ring-fuchsia-400/30", edge: "border-l-fuchsia-400/70" },
 };
 
 // Each agent's color, shared with the status that agent works in (RESEARCHING,

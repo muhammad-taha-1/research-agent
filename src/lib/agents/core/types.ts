@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { z } from "zod";
-import type { AgentRole } from "@/generated/prisma/enums";
+import type { AgentRole, ErrorType } from "@/generated/prisma/enums";
 import type { AgentMemory } from "./memory";
 
 // The loop calls client.beta.messages (for context editing), so use the beta tool type
@@ -10,6 +10,7 @@ export interface ToolResult {
   success: boolean;
   data: unknown;
   error?: string;
+  errorType?: ErrorType; // why it failed, for the error distribution (TOOL_ERROR when unset)
 }
 
 export interface AgentTool<S extends z.ZodTypeAny = z.ZodTypeAny> {
@@ -33,8 +34,8 @@ export function ok(data: unknown): ToolResult {
   return { success: true, data };
 }
 
-export function fail(error: string): ToolResult {
-  return { success: false, data: null, error };
+export function fail(error: string, errorType?: ErrorType): ToolResult {
+  return { success: false, data: null, error, ...(errorType && { errorType }) };
 }
 
 // === The agent loop ===

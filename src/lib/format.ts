@@ -12,6 +12,16 @@ export function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+/** "$0.04 (12.4K tokens)" */
+export function formatCostTokens(usd: number, tokens: number): string {
+  return `${formatCost(usd)} (${formatTokens(tokens)} tokens)`;
+}
+
+/** 0.623 → "62%" */
+export function formatPercent(ratio: number): string {
+  return `${Math.round(ratio * 100)}%`;
+}
+
 /** 950 → "950ms", 4200 → "4.2s", 125000 → "2m 05s", 3720000 → "1h 02m" */
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;

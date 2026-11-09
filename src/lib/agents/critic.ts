@@ -2,11 +2,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import type { Prisma, ResearchProject } from "@/generated/prisma/client";
+import type { ErrorType } from "@/generated/prisma/enums";
 import { anthropic, MODELS } from "@/lib/ai/anthropic";
 import { prisma } from "@/lib/db/prisma";
+import { categorizeApiError, categorizeStopReason } from "@/lib/observability/errors";
+import { logStep } from "@/lib/observability/log";
 import { toStepView } from "@/lib/research/queries";
 import type { CriticReviewView } from "@/types/research";
-import { event, promptTokens, recordRunUsage } from "./core/loop";
+import { event, recordRunUsage, turnUsage } from "./core/loop";
 import { AgentMemory, type SerializedMemory } from "./core/memory";
 import type { EmitFn } from "./core/types";
 
@@ -121,12 +124,20 @@ export async function runCriticRun(
     review: CriticReviewView | null,
     reason: string,
     response?: Anthropic.Message,
-    error?: string,
+    failure?: { error: string; errorType: ErrorType },
   ): Promise<CriticReviewView | null> => {
-    if (response) await recordRunUsage(run.id, response, emit);
+    const duration = Date.now() - started;
+    const error = failure?.error;
+    const costUsd = response ? await recordRunUsage(run.id, response, emit) : 0;
     await prisma.agentRun.update({
       where: { id: run.id },
-      data: { status: error ? "ERROR" : "COMPLETED", endReason: reason, error: error ?? null, completedAt: new Date() },
+      data: {
+        status: error ? "ERROR" : "COMPLETED",
+        endReason: reason,
+        error: error ?? null,
+        errorType: failure?.errorType ?? null,
+        completedAt: new Date(),
+      },
     });
     const row = await prisma.agentStep.create({
       data: {
@@ -134,13 +145,14 @@ export async function runCriticRun(
         stepNumber: 1,
         type: "REVIEW",
         toolResult: (review ?? undefined) as Prisma.InputJsonValue | undefined,
-        duration: Date.now() - started,
-        inputTokens: response && promptTokens(response.usage),
-        outputTokens: response?.usage.output_tokens,
+        duration,
+        ...(response && turnUsage(response, costUsd, duration)),
         status: review ? "COMPLETED" : "ERROR",
         error: review ? undefined : error,
+        errorType: review ? undefined : failure?.errorType,
       },
     });
+    logStep(row, run);
     await emit(event("step_complete", toStepView(row, run)));
     if (review) await emit(event("review", { runId: run.id, ...review }));
     const data = { runId: run.id, role: "CRITIC", outcome: error ? "ERROR" : "COMPLETED", reason, error };
@@ -159,15 +171,22 @@ export async function runCriticRun(
   } catch (error) {
     // API errors (the SDK already retried 429/5xx) and output that didn't parse
     if (error instanceof Anthropic.AnthropicError) {
-      return finish(null, error instanceof Anthropic.APIError ? "api_error" : "parse_error", undefined, error.message);
+      const reason = error instanceof Anthropic.APIError ? "api_error" : "parse_error";
+      return finish(null, reason, undefined, { error: error.message, errorType: categorizeApiError(error) });
     }
     throw error;
   }
 
   const { response, review: data } = result;
   if (!data) {
-    const why = response.stop_details?.explanation;
-    return finish(null, "refusal", response, `The critic declined to review${why ? `: ${why}` : ""}`);
+    if (response.stop_reason === "refusal") {
+      const why = response.stop_details?.explanation;
+      const error = `The critic declined to review${why ? `: ${why}` : ""}`;
+      return finish(null, "refusal", response, { error, errorType: "REFUSAL" });
+    }
+    const error = `The critic returned no review (stop reason: ${response.stop_reason})`;
+    const errorType = categorizeStopReason(response.stop_reason) ?? "PARSE_ERROR";
+    return finish(null, response.stop_reason ?? "parse_error", response, { error, errorType });
   }
 
   const gaps = data.identified_gaps.slice(0, MAX_GAPS);

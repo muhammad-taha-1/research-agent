@@ -3,8 +3,9 @@ import type Anthropic from "@anthropic-ai/sdk";
 // $ per million tokens. Check current pricing before relying on these.
 // Cache writes are 1.25x input (5-minute cache); cache reads are much cheaper than input.
 // Haiku cache rates below assume the standard 1.25x / 0.1x multipliers.
+// Sonnet 5.5 cache reads are $0.10 (0.05x input), cheaper than the usual 0.1x.
 export const PRICING: Record<string, { input: number; output: number; cacheWrite: number; cacheRead: number }> = {
-  "claude-sonnet-5-5": { input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.2 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.1 },
   "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheWrite: 0.125, cacheRead: 0.01 }, // prompts ≤100K tokens
   "claude-opus-5-5": { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 },
 };
