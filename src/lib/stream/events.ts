@@ -1,4 +1,5 @@
 import type { AgentEvent } from "@/lib/agents/core/types";
+import { agentLogEnabled } from "@/lib/observability/log";
 import { redis } from "@/lib/queue/connection";
 
 // The event bus between the worker (which runs the agent) and the SSE endpoint.
@@ -11,9 +12,16 @@ const KEEP_SECONDS = 60 * 60 * 24 * 7; // a week; after that the database is the
 /** Stream IDs look like `1729588800000-0`; `0` means "from the beginning". */
 export const isStreamId = (id: string) => /^(0|\d+-\d+)$/.test(id);
 
+// Already in the JSON agent log (one line per step, with tokens and cost), unless it's off
+const IN_AGENT_LOG = new Set<AgentEvent["type"]>(["step_complete", "usage"]);
+
+/**
+ * Appends an event to the project's stream for live viewers, and prints a readable
+ * line of it to the worker's console. Never throws.
+ */
 export async function publishEvent(projectId: string, event: AgentEvent): Promise<void> {
   const line = describeEvent(event);
-  if (line) console.log(`[${projectId.slice(-6)}] ${line}`);
+  if (line && !(IN_AGENT_LOG.has(event.type) && agentLogEnabled())) console.log(`[${projectId.slice(-6)}] ${line}`);
 
   // Everything here is already saved in the database, so a Redis hiccup only costs
   // the live view an update. It must not fail the research run.

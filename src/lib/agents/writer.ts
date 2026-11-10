@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Finding, Prisma } from "@/generated/prisma/client";
 import type { ErrorType, StepStatus } from "@/generated/prisma/enums";
-import { anthropic, MODELS } from "@/lib/ai/anthropic";
+import { anthropic, MODEL_SETTINGS, MODELS } from "@/lib/ai/anthropic";
 import { REPORT_WRITER_PROMPT } from "@/lib/ai/prompts";
 import { readControlSignals } from "@/lib/control/signals";
 import { prisma } from "@/lib/db/prisma";
@@ -43,6 +43,12 @@ export class ReportGenerationError extends Error {
   }
 }
 
+/**
+ * Writes the report from the findings in one streamed call. `onChunk` gets the
+ * visible text as it arrives (the source list is appended at the end, built from
+ * the findings). Throws ReportGenerationError for a response that can't be used
+ * (cut off, refused), and the SDK's errors for failed requests or an abort.
+ */
 export async function generateReport(
   query: string,
   findings: Finding[],
@@ -60,10 +66,10 @@ export async function generateReport(
   const stream = anthropic.beta.messages.stream(
     {
       model: MODELS.writer,
-      max_tokens: 32_000, // thinking + a 3000-word report
+      max_tokens: MODEL_SETTINGS.writer.maxTokens,
       betas: WRITER_BETAS,
       fallbacks: "default",
-      output_config: { effort: "high" }, // synthesis is the point of the report; thinking is adaptive by default
+      output_config: { effort: MODEL_SETTINGS.writer.effort }, // thinking is adaptive by default
       system: REPORT_WRITER_PROMPT,
       messages: [
         {
@@ -83,7 +89,7 @@ export async function generateReport(
 
   const response = await stream.finalMessage();
   if (response.stop_reason === "max_tokens") {
-    throw new ReportGenerationError("The report was cut off (max_tokens); raise the writer's max_tokens", response);
+    throw new ReportGenerationError("The report was cut off at max_tokens; raise MODEL_SETTINGS.writer.maxTokens", response);
   }
   if (response.stop_reason === "refusal") {
     const why = response.stop_details?.explanation;

@@ -29,7 +29,7 @@ export function ResearchView({ project: snapshot, position }: { project: Project
   const live = STATUS_META[project.status].live;
   const writing = project.status === "WRITING";
 
-  // Desktop: "Live research" | "Report". Mobile: one panel at a time, the report among them.
+  // Tablet and desktop: "Live research" | "Report" | "Analytics". Phones: one panel at a time.
   // Opens on the report once there is one (or while it's written), and switches to
   // it when writing starts.
   const showReport = writing || (project.report !== null && !live);
@@ -44,12 +44,14 @@ export function ResearchView({ project: snapshot, position }: { project: Project
     }
   }
 
-  const timeline = <ResearchTimeline projectId={project.id} steps={project.steps} live={live} />;
+  const timeline = (
+    <ResearchTimeline projectId={project.id} steps={project.steps} live={live} activity={liveActivity} />
+  );
   const analytics = <ProjectAnalytics project={project} live={live} />;
   const activity = (
     <CurrentActivity status={project.status} round={project.round} steps={project.steps} activity={liveActivity} />
   );
-  const findings = <FindingsPanel findings={project.findings} />;
+  const findings = <FindingsPanel findings={project.findings} live={live && !writing} />;
   const report = (
     <ReportView
       projectId={project.id}
@@ -69,7 +71,7 @@ export function ResearchView({ project: snapshot, position }: { project: Project
   );
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6 lg:h-[calc(100svh-3.5rem)]">
+    <div className="flex flex-col gap-4 p-4 md:h-[calc(100svh-3.5rem)] md:p-6">
       <header className="flex flex-col gap-3">
         <Link
           href="/"
@@ -118,13 +120,15 @@ export function ResearchView({ project: snapshot, position }: { project: Project
         findingCount={project.findings.length}
         hasReport={project.report !== null}
         redirects={project.redirects}
+        runs={project.runs}
       />
 
-      {/* Desktop: timeline | activity | findings, each scrolling on its own; or the report */}
+      {/* Desktop: timeline | activity | findings, each scrolling on its own. Tablet: the
+          timeline on the left, activity over findings on the right. Or the report. */}
       <Tabs
         value={desktopTab}
         onValueChange={(v) => setDesktopTab(String(v))}
-        className="hidden min-h-0 flex-1 lg:flex"
+        className="hidden min-h-0 flex-1 md:flex"
       >
         <TabsList>
           <TabsTrigger value="research" className="px-3">
@@ -141,9 +145,9 @@ export function ResearchView({ project: snapshot, position }: { project: Project
         </TabsList>
         <TabsContent
           value="research"
-          className="min-h-0 gap-4 data-[hidden]:hidden lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)]"
+          className="min-h-0 gap-4 data-[hidden]:hidden md:grid md:grid-cols-2 md:grid-rows-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)] lg:grid-rows-1"
         >
-          {timeline}
+          <div className="grid min-h-0 md:row-span-2 lg:row-span-1">{timeline}</div>
           {activity}
           {findings}
         </TabsContent>
@@ -156,7 +160,7 @@ export function ResearchView({ project: snapshot, position }: { project: Project
       </Tabs>
 
       {/* Mobile: one panel at a time */}
-      <Tabs value={mobileTab} onValueChange={(v) => setMobileTab(String(v))} className="lg:hidden">
+      <Tabs value={mobileTab} onValueChange={(v) => setMobileTab(String(v))} className="md:hidden">
         {/* Five tabs don't fit a phone with labels: there only the open tab shows its label */}
         <TabsList className="w-full">
           <TabsTrigger value="timeline" aria-label="Timeline" className="group/tab">

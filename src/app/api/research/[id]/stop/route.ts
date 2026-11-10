@@ -2,6 +2,7 @@ import { jsonError, notFound, unauthorized } from "@/lib/api";
 import { getUserId } from "@/lib/auth";
 import { requestStop } from "@/lib/control/signals";
 import { prisma } from "@/lib/db/prisma";
+import { isStuck, researchOutcome } from "@/lib/queue/jobs";
 import { TERMINAL_STATUSES } from "@/lib/research/config";
 import { findOwnedProject } from "@/lib/research/queries";
 
@@ -24,9 +25,25 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/research/[id]/
     return jsonError(503, "Couldn't reach Redis to stop the agent. Is it running?");
   }
 
+  const now = new Date();
+
+  // Stuck in a running state with no job behind it: no agent will see the flag, so
+  // end the runs it left RUNNING here. A stuck writer puts the project back to how
+  // its research ended, as a finished report job would.
+  if (await isStuck(project).catch(() => false)) {
+    const status = project.status === "WRITING" ? await researchOutcome(id) : "STOPPED";
+    await prisma.$transaction([
+      prisma.agentRun.updateMany({
+        where: { projectId: id, status: { in: ["RUNNING", "PAUSED"] } },
+        data: { status: "STOPPED", endReason: "user_stop", completedAt: now },
+      }),
+      prisma.researchProject.update({ where: { id }, data: { status } }),
+    ]);
+    return Response.json({ status });
+  }
+
   // No agent is running (not started, still waiting for a worker, or paused), so
   // stop directly. A queued job sees the status and skips the project.
-  const now = new Date();
   const [, stopped] = await prisma.$transaction([
     prisma.agentRun.updateMany({
       where: { projectId: id, status: "PAUSED" },

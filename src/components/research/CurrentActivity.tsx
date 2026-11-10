@@ -50,13 +50,13 @@ export function CurrentActivity({ status, round, steps, activity }: Props) {
             activity.calls.map((c) => (
               <NowLine key={c.stepNumber} label="Now" text={describeToolCall(c.tool, c.input)} />
             ))
+          ) : latest ? (
+            <NowLine
+              label={`${meta.live ? "Now" : "Last"} · ${STEP_META[latest.type].label}`}
+              text={summarizeStep(latest)}
+            />
           ) : (
-            latest && (
-              <NowLine
-                label={`${meta.live ? "Now" : "Last"} · ${STEP_META[latest.type].label}`}
-                text={summarizeStep(latest)}
-              />
-            )
+            meta.live && <NowLine label="Now" text="Initializing agent…" />
           )}
         </div>
 

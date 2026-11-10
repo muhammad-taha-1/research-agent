@@ -24,6 +24,9 @@ export async function GET(req: Request, ctx: RouteContext<"/api/research/[id]/st
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
+      // Headers only go out with the first chunk: without this the page shows
+      // "Connecting…" until the first event or heartbeat, e.g. while still queued
+      controller.enqueue(encoder.encode(SSE_HEARTBEAT));
       try {
         for await (const item of readEvents(id, lastId, req.signal)) {
           if ("heartbeat" in item) {

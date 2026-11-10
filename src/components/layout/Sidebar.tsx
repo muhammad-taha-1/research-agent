@@ -21,7 +21,7 @@ export function Brand() {
 
 export function Sidebar() {
   return (
-    <aside className="hidden w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
+    <aside className="hidden w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
       <div className="flex h-14 items-center px-4">
         <Brand />
       </div>

@@ -46,7 +46,7 @@ export async function listProjects(userId: string): Promise<ProjectSummary[]> {
 export function findOwnedProject(id: string, userId: string) {
   return prisma.researchProject.findFirst({
     where: { id, userId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, updatedAt: true },
   });
 }
 

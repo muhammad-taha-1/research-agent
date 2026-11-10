@@ -7,6 +7,7 @@ import { categorizeApiError, categorizeStopReason } from "@/lib/observability/er
 import { logAgentAction, logStep } from "@/lib/observability/log";
 import {
   hasPendingRedirects,
+  readControl,
   readControlSignals,
   takeRedirects,
   type PendingRedirect,
@@ -95,10 +96,21 @@ interface StepInput {
   errorType?: ErrorType;
 }
 
+/** An AgentEvent stamped with the current time. */
 export function event(type: AgentEventType, data: unknown): AgentEvent {
   return { type, data, timestamp: new Date().toISOString() };
 }
 
+/**
+ * Runs one agent's ReAct loop until Claude finishes, a limit or a human control
+ * ends it, or an error does. Every step is saved and emitted as it happens, and the
+ * conversation is checkpointed after every turn, so a run continues from where it
+ * was after a pause or a worker crash.
+ *
+ * Returns how it ended. The run row is already updated for every outcome except
+ * PAUSED, which the caller records (it knows whether more work follows). Throws
+ * ControlUnavailableError when Redis stays unreachable; the state is checkpointed.
+ */
 export async function runAgentLoop(
   config: AgentConfig,
   state: AgentState,
@@ -113,13 +125,15 @@ export async function runAgentLoop(
     if (state.costUsd >= config.maxCostUsd) return endRun(ctx, "LIMIT_REACHED", "budget");
     if (Date.now() - state.startedAt >= config.maxDurationMs) return endRun(ctx, "LIMIT_REACHED", "timeout");
 
-    const signals = await readControlSignals(state.projectId);
+    // If Redis stays down these throw ControlUnavailableError, and the orchestrator
+    // pauses the run. Nothing is lost: every path here starts from a checkpoint.
+    const signals = await readControl(() => readControlSignals(state.projectId));
     if (signals.stop) return endRun(ctx, "STOPPED", "user_stop");
     if (signals.pause) {
       await checkpoint(ctx); // pending redirects stay queued until resume
       return "PAUSED";
     }
-    const redirects = await takeRedirects(state.projectId); // reads AND clears the queue
+    const redirects = await readControl(() => takeRedirects(state.projectId)); // reads AND clears the queue
     if (redirects.length > 0) await applyRedirects(ctx, redirects);
 
     // ---- THINK: ask Claude for the next move ----
@@ -137,7 +151,7 @@ export async function runAgentLoop(
         tools: config.tools,
         messages: state.messages,
         thinking: { type: "adaptive", display: "summarized" }, // the default display is empty; we want to show it
-        output_config: { effort: "medium" }, // a good start for multi-step tool use; tune in Phase 7
+        output_config: { effort: config.effort },
         cache_control: { type: "ephemeral" }, // cache everything up to the newest message
         context_management: { edits: [CLEAR_OLD_TOOL_RESULTS] },
       });
@@ -161,7 +175,7 @@ export async function runAgentLoop(
     // ---- Stop reasons to handle BEFORE running anything ----
     // refusal: the whole fallback chain declined. max_tokens / context window: a
     // tool_use cut off mid-input must not run or be appended (it would never get a
-    // tool_result). If you see max_tokens, raise maxTokensPerStep.
+    // tool_result). If you see max_tokens, raise MODEL_SETTINGS.researcher.maxTokens.
     const stopError = categorizeStopReason(response.stop_reason);
     if (stopError) {
       const explanation = response.stop_details?.explanation ?? undefined;
@@ -195,7 +209,7 @@ export async function runAgentLoop(
     if (state.doneRequested) {
       // An instruction that arrived as the agent wrapped up still gets applied: the
       // conversation ends on tool results, so the next boundary can append it.
-      if (!(await hasPendingRedirects(state.projectId))) return endRun(ctx, "COMPLETED", "agent_done");
+      if (!(await readControl(() => hasPendingRedirects(state.projectId)))) return endRun(ctx, "COMPLETED", "agent_done");
       state.doneRequested = false;
     }
   }

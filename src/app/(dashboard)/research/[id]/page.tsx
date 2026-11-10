@@ -32,14 +32,15 @@ async function Research({ params }: Pick<PageProps<"/research/[id]">, "params">)
 
 function ResearchViewSkeleton() {
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6 lg:h-[calc(100svh-3.5rem)]" aria-busy="true">
+    <div className="flex flex-col gap-4 p-4 md:h-[calc(100svh-3.5rem)] md:p-6" aria-busy="true">
       <Skeleton className="h-16 w-2/3" />
       <Skeleton className="h-20" />
       <Skeleton className="h-14" />
-      <div className="grid min-h-80 flex-1 gap-4 lg:grid-cols-3">
-        <Skeleton className="rounded-xl" />
-        <Skeleton className="hidden rounded-xl lg:block" />
-        <Skeleton className="hidden rounded-xl lg:block" />
+      {/* The same columns as the live view: one on phones, two on tablets, three on desktops */}
+      <div className="grid min-h-80 flex-1 gap-4 md:grid-cols-2 md:grid-rows-2 lg:grid-cols-3 lg:grid-rows-1">
+        <Skeleton className="rounded-xl md:row-span-2 lg:row-span-1" />
+        <Skeleton className="hidden rounded-xl md:block" />
+        <Skeleton className="hidden rounded-xl md:block" />
       </div>
     </div>
   );

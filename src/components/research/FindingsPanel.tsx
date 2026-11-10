@@ -1,17 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { Bookmark, ChevronDown } from "lucide-react";
+import { Bookmark, ChevronDown, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FindingView } from "@/types/research";
 import { Panel, PanelEmpty } from "./Panel";
 import { SourceLink } from "./StepCard";
 
-export function FindingsPanel({ findings }: { findings: FindingView[] }) {
+/** `live`: the researcher is at work, so an empty list means "nothing yet", not "nothing". */
+export function FindingsPanel({ findings, live = false }: { findings: FindingView[]; live?: boolean }) {
   return (
     <Panel title="Findings" count={findings.length} countLabel={findings.length === 1 ? "finding" : "findings"}>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {findings.length === 0 ? (
+        {findings.length === 0 && live ? (
+          <PanelEmpty icon={<Search className="size-5 animate-bounce" />}>
+            The agent is searching…
+            <span className="mt-1 block text-xs">Findings appear here as it saves them, each linked to its source.</span>
+          </PanelEmpty>
+        ) : findings.length === 0 ? (
           <PanelEmpty icon={<Bookmark className="size-5" />}>
             Facts and insights the agent saves will collect here, each linked to its source.
           </PanelEmpty>

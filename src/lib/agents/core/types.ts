@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { z } from "zod";
 import type { AgentRole, ErrorType } from "@/generated/prisma/enums";
+import type { Effort } from "@/lib/ai/anthropic";
 import type { AgentMemory } from "./memory";
 
 // The loop calls client.beta.messages (for context editing), so use the beta tool type
@@ -30,10 +31,16 @@ export function defineTool<S extends z.ZodTypeAny>(tool: AgentTool<S>): AgentToo
   return tool;
 }
 
+/** A successful tool result: `data` goes back to Claude as the tool_result content. */
 export function ok(data: unknown): ToolResult {
   return { success: true, data };
 }
 
+/**
+ * A failed tool result. Tools return failures instead of throwing, so Claude reads
+ * the message and adapts (another source, another query). `errorType` feeds the
+ * run analytics; without it the loop records TOOL_ERROR.
+ */
 export function fail(error: string, errorType?: ErrorType): ToolResult {
   return { success: false, data: null, error, ...(errorType && { errorType }) };
 }
@@ -47,6 +54,7 @@ export interface AgentConfig {
   tools: ToolDefinition[];
   maxSteps: number; // max tool calls per run (safety limit)
   maxTokensPerStep: number; // max_tokens per model call; thinking counts toward it
+  effort: Effort; // reasoning effort per model call
   maxCostUsd: number;
   maxDurationMs: number;
   // evaluate_progress can't end the run before this much work is done (limits still can)

@@ -19,10 +19,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useGenerateReport } from "@/hooks/useGenerateReport";
+import { useJobHealth } from "@/hooks/useJobHealth";
 import { postJson as post } from "@/lib/http";
 import { ACTIVE_STATUSES, INSTRUCTION_MAX, TERMINAL_STATUSES } from "@/lib/research/config";
 import type { ProjectStatus } from "@/generated/prisma/enums";
-import type { RedirectView } from "@/types/research";
+import type { RedirectView, RunSummaryView } from "@/types/research";
+import { RunNotice } from "./RunNotice";
 
 interface Props {
   projectId: string;
@@ -30,9 +32,10 @@ interface Props {
   findingCount: number;
   hasReport: boolean;
   redirects: RedirectView[];
+  runs: RunSummaryView[];
 }
 
-export function AgentControls({ projectId, status, findingCount, hasReport, redirects }: Props) {
+export function AgentControls({ projectId, status, findingCount, hasReport, redirects, runs }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState<"start" | "pause" | "resume" | "stop" | "redirect" | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
@@ -49,7 +52,9 @@ export function AgentControls({ projectId, status, findingCount, hasReport, redi
   const terminal = TERMINAL_STATUSES.includes(status);
   const active = ACTIVE_STATUSES.includes(status);
   const writing = status === "WRITING"; // one streamed call: it can be stopped, not paused or redirected
-  const canPause = active && status !== "QUEUED" && !writing;
+  const health = useJobHealth(projectId, status);
+  const stuck = health?.stuck === true; // running by its status, but no job is: Resume restarts it
+  const canPause = active && status !== "QUEUED" && !writing && !stuck;
   const paused = status === "PAUSED";
   const report = useGenerateReport(projectId);
   const pausing = requested === "pause" && active;
@@ -80,6 +85,7 @@ export function AgentControls({ projectId, status, findingCount, hasReport, redi
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-3">
+      <RunNotice status={status} runs={runs} findingCount={findingCount} health={health} />
       <div className="flex flex-wrap items-center gap-2">
         {status === "CREATED" ? (
           <Button
@@ -94,16 +100,16 @@ export function AgentControls({ projectId, status, findingCount, hasReport, redi
             {report.pending ? <Loader2 className="animate-spin" /> : <Sparkles />}
             Generate report
           </Button>
-        ) : paused ? (
+        ) : paused || stuck ? (
           <Button
-            variant="outline"
+            variant={stuck ? "default" : "outline"}
             disabled={busy !== null}
             onClick={() => run("resume", async () => void (await post(`${base}/resume`)))}
           >
             {busy === "resume" ? <Loader2 className="animate-spin" /> : <Play />}
             Resume
           </Button>
-        ) : (
+        ) : terminal ? null : (
           <Button
             variant="outline"
             disabled={!canPause || pausing || stopping || busy !== null}
@@ -119,8 +125,17 @@ export function AgentControls({ projectId, status, findingCount, hasReport, redi
           </Button>
         )}
 
+        {/* Hidden once the research has ended: there's nothing left to stop */}
         <Dialog open={stopOpen} onOpenChange={setStopOpen}>
-          <DialogTrigger render={<Button variant="destructive" disabled={terminal || stopping || busy !== null} />}>
+          <DialogTrigger
+            render={
+              <Button
+                variant="destructive"
+                className={terminal ? "hidden" : undefined}
+                disabled={terminal || stopping || busy !== null}
+              />
+            }
+          >
             {stopping ? <Loader2 className="animate-spin" /> : <Square />}
             {stopping ? "Stopping…" : "Stop"}
           </DialogTrigger>

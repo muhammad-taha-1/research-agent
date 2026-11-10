@@ -1,10 +1,11 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Plus, Telescope } from "lucide-react";
+import { ArrowRight, Plus, Sparkles, Telescope } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ResearchCard } from "@/components/research/ResearchCard";
 import { requireUser } from "@/lib/auth";
+import { EXAMPLE_TOPICS } from "@/lib/research/config";
 import { listProjects } from "@/lib/research/queries";
 
 export default function DashboardPage() {
@@ -57,8 +58,25 @@ function EmptyState() {
       </div>
       <Link href="/research/new" className={buttonVariants()}>
         <Plus />
-        Start your first research
+        Start your first research project
       </Link>
+      <div className="mt-4 flex w-full max-w-xl flex-col gap-2">
+        <p className="font-mono text-[11px] tracking-widest text-muted-foreground uppercase">Or try one of these</p>
+        <ul className="flex flex-col gap-2">
+          {EXAMPLE_TOPICS.map((topic) => (
+            <li key={topic}>
+              <Link
+                href={`/research/new?q=${encodeURIComponent(topic)}`}
+                className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-left text-sm transition-colors hover:border-foreground/20 hover:bg-accent/40"
+              >
+                <Sparkles className="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+                <span className="min-w-0 flex-1">{topic}</span>
+                <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }

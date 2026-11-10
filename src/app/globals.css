@@ -130,3 +130,17 @@
     @apply font-sans;
   }
 }
+/* The report's typing cursor while the writer streams: at the end of the newest
+   paragraph, heading, or list item (a table or code block in progress shows none) */
+.report-writing > :is(p, h2, h3, h4, blockquote):last-child::after,
+.report-writing > :is(ul, ol):last-child > li:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.375rem;
+  height: 1em;
+  margin-left: 0.125rem;
+  vertical-align: text-bottom;
+  border-radius: 2px;
+  background: var(--color-fuchsia-400);
+  animation: var(--animate-pulse);
+}

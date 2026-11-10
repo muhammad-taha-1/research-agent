@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import {
   DEPTH_OPTIONS,
   DEPTHS,
+  EXAMPLE_TOPICS,
   FOCUS_AREA_MAX_LENGTH,
   FOCUS_AREAS_MAX,
   QUERY_MAX,
@@ -18,15 +19,10 @@ import {
 } from "@/lib/research/config";
 import type { ResearchDepth } from "@/generated/prisma/enums";
 
-const EXAMPLES = [
-  "What are the latest developments in solid-state batteries?",
-  "Compare the top 5 project management tools for startups in 2026",
-  "How is AI being used in drug discovery?",
-];
-
-export function NewResearchForm() {
+/** `initialQuery`: prefilled from `?q=`, e.g. by an example topic on the empty dashboard. */
+export function NewResearchForm({ initialQuery = "" }: { initialQuery?: string }) {
   const router = useRouter();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery.slice(0, QUERY_MAX));
   const [depth, setDepth] = useState<ResearchDepth>("STANDARD");
   const [focusAreas, setFocusAreas] = useState<string[]>([]);
   const [focusDraft, setFocusDraft] = useState("");
@@ -105,7 +101,7 @@ export function NewResearchForm() {
           </span>
         </div>
         <div className="flex flex-wrap gap-2">
-          {EXAMPLES.map((example) => (
+          {EXAMPLE_TOPICS.map((example) => (
             <button
               key={example}
               type="button"
@@ -210,7 +206,7 @@ export function NewResearchForm() {
         </span>
         <Button type="submit" size="lg" disabled={submitting}>
           {submitting ? <Loader2 className="animate-spin" /> : <Rocket />}
-          {submitting ? "Creating…" : "Start research"}
+          {submitting ? "Creating project…" : "Start research"}
         </Button>
       </div>
     </form>

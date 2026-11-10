@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ResearchProject } from "@/generated/prisma/client";
 import type { ResearchDepth } from "@/generated/prisma/enums";
-import { MODELS } from "@/lib/ai/anthropic";
+import { MODEL_SETTINGS, MODELS } from "@/lib/ai/anthropic";
 import type { ToolRegistry } from "@/lib/tools/registry";
 import { DEPTH_LIMITS, GAP_ROUND_LIMITS } from "./core/limits";
 import type { AgentConfig } from "./core/types";
@@ -98,6 +98,12 @@ export interface RoundBrief {
   suggestedSearches?: string[];
 }
 
+/**
+ * The researcher's first user message: today's date, the depth and its work
+ * target, the question, and focus areas. A gap round (2+) adds what earlier rounds
+ * found and the critic's gaps. Per-run details live here, not in the system prompt,
+ * so the system prompt stays identical across runs and cached.
+ */
 export function buildInitialMessage(
   project: Pick<ResearchProject, "query" | "depth" | "focusAreas">,
   brief: RoundBrief = {},
@@ -126,6 +132,11 @@ export function buildInitialMessage(
   return { role: "user", content: parts.join("\n\n") };
 }
 
+/**
+ * The researcher's loop config for a depth and round: its model and prompt, all
+ * tools, the run limits (a gap round gets about half), and the minimum work before
+ * evaluate_progress may end the run.
+ */
 export function createResearcherConfig(depth: ResearchDepth, tools: ToolRegistry, round = 1): AgentConfig {
   const target = targetsFor(depth, round);
   return {
@@ -133,7 +144,8 @@ export function createResearcherConfig(depth: ResearchDepth, tools: ToolRegistry
     model: MODELS.researcher,
     systemPrompt: RESEARCHER_SYSTEM_PROMPT,
     tools: tools.getDefinitions(),
-    maxTokensPerStep: 16_000, // thinking counts toward this, so don't set it low
+    maxTokensPerStep: MODEL_SETTINGS.researcher.maxTokens,
+    effort: MODEL_SETTINGS.researcher.effort,
     minimumWork: { searches: target.searches[0], pagesRead: target.reads[0] },
     ...(round > 1 ? GAP_ROUND_LIMITS : DEPTH_LIMITS)[depth],
   };

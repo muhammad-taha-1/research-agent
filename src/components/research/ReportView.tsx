@@ -134,10 +134,8 @@ export function ReportView({ projectId, status, report, draft, findingCount, ste
                   </CollapsibleContent>
                 </Collapsible>
               )}
-              <Markdown>{text}</Markdown>
-              {writing && (
-                <span className="inline-block h-4 w-1.5 animate-pulse rounded-sm bg-fuchsia-400 align-middle" aria-hidden />
-              )}
+              {/* While writing, a cursor follows the newest text (see .report-writing in globals.css) */}
+              <Markdown className={cn(writing && "report-writing")}>{text}</Markdown>
               {!writing && report && (
                 <footer className="mt-10 border-t pt-4 font-mono text-[11px] text-muted-foreground" suppressHydrationWarning>
                   Written {formatDistanceToNow(new Date(report.updatedAt), { addSuffix: true })} from {findingCount}{" "}

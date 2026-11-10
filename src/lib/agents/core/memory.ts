@@ -60,6 +60,7 @@ export function words(text: string): string[] {
   return text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 }
 
+/** Word-set overlap from 0 (none) to 1 (same words): |A ∩ B| / |A ∪ B|. */
 export function jaccard(a: string[], b: string[]): number {
   const setA = new Set(a);
   const setB = new Set(b);

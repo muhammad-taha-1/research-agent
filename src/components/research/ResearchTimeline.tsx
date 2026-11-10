@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
-import { Activity, Bug } from "lucide-react";
+import { Activity, Bug, Loader2 } from "lucide-react";
 import type { AgentRole } from "@/generated/prisma/enums";
-import { AGENT_META, runTitle } from "@/lib/research/steps";
+import type { LiveActivity } from "@/hooks/useResearchStream";
+import { AGENT_META, describeToolCall, runTitle } from "@/lib/research/steps";
 import { cn } from "@/lib/utils";
 import type { AgentStepView } from "@/types/research";
 import { Panel, PanelEmpty } from "./Panel";
@@ -53,14 +54,39 @@ function RunHeading({ role, round, href }: { role: AgentRole; round: number; hre
   );
 }
 
+/** The step being worked on, before it's saved: a spinner, and what the agent is doing. */
+function PendingStep({ activity }: { activity: Exclude<LiveActivity, { kind: "idle" }> }) {
+  const lines =
+    activity.kind === "tools"
+      ? activity.calls.map((c) => describeToolCall(c.tool, c.input))
+      : ["Deciding the next step…"];
+  return (
+    <li className="relative animate-in pl-9 duration-300 fade-in" role="status">
+      <span className="absolute top-1.5 left-0 flex size-6 items-center justify-center rounded-full bg-card text-muted-foreground ring-1 ring-border">
+        <Loader2 className="size-3.5 animate-spin" />
+      </span>
+      <div className="flex flex-col gap-0.5 px-2 py-1.5 text-sm text-muted-foreground">
+        {lines.map((line, i) => (
+          <span key={i} className="flex items-start gap-2">
+            <span className="size-3.5 shrink-0" /> {/* lines up with the step cards' text */}
+            <span className="min-w-0 break-words">{line}</span>
+          </span>
+        ))}
+      </div>
+    </li>
+  );
+}
+
 interface Props {
   projectId: string;
   steps: AgentStepView[];
-  /** The agent is working: the newest step pulses. */
+  /** The agent is working: the step in progress shows a spinner (or the newest one pulses). */
   live: boolean;
+  activity: LiveActivity;
 }
 
-export function ResearchTimeline({ projectId, steps, live }: Props) {
+export function ResearchTimeline({ projectId, steps, live, activity }: Props) {
+  const pending = live && activity.kind !== "idle" ? activity : null;
   const scrollerRef = useRef<HTMLDivElement>(null);
   // Follow new steps until the reader scrolls up; scrolling back to the bottom resumes it.
   // Decided from the reader's scrolling, not measured after new steps render: by then
@@ -80,7 +106,7 @@ export function ResearchTimeline({ projectId, steps, live }: Props) {
   useEffect(() => {
     const el = scrollerRef.current;
     if (el && following.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [steps.length]);
+  }, [steps.length, pending?.kind]);
 
   const groups = useMemo(() => groupByRun(steps), [steps]);
   const lastId = steps.at(-1)?.id;
@@ -89,9 +115,22 @@ export function ResearchTimeline({ projectId, steps, live }: Props) {
     <Panel title="Timeline" count={steps.length} countLabel="steps">
       <div ref={scrollerRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {steps.length === 0 ? (
-          <PanelEmpty icon={<Activity className="size-5" />}>
-            Each search, page read, and note appears here as the agent works.
-          </PanelEmpty>
+          live ? (
+            <PanelEmpty
+              icon={
+                <span className="relative flex size-3">
+                  <span className="absolute inset-0 animate-ping rounded-full bg-sky-400 opacity-60" />
+                  <span className="relative size-3 rounded-full bg-sky-400" />
+                </span>
+              }
+            >
+              Initializing agent…
+            </PanelEmpty>
+          ) : (
+            <PanelEmpty icon={<Activity className="size-5" />}>
+              Each search, page read, and note appears here as the agent works.
+            </PanelEmpty>
+          )
         ) : (
           <div className="flex flex-col gap-3">
             {groups.map((group) => (
@@ -110,8 +149,9 @@ export function ResearchTimeline({ projectId, steps, live }: Props) {
                   )}
                 >
                   {group.steps.map((step) => (
-                    <StepCard key={step.id} step={step} active={live && step.id === lastId} />
+                    <StepCard key={step.id} step={step} active={live && !pending && step.id === lastId} />
                   ))}
+                  {pending && group === groups.at(-1) && <PendingStep activity={pending} />}
                 </ol>
               </section>
             ))}

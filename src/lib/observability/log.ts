@@ -34,6 +34,9 @@ function mode(): "off" | "full" | "compact" {
   return v === "off" || v === "0" || v === "false" ? "off" : v === "full" ? "full" : "compact";
 }
 
+/** Whether agent actions are logged as JSON lines (AGENT_LOG isn't "off"). */
+export const agentLogEnabled = () => mode() !== "off";
+
 /** Long values are clipped to a preview in compact mode so a line stays readable. */
 function clip(value: unknown, full: boolean): unknown {
   if (value === undefined || value === null || full) return value ?? undefined;
@@ -42,6 +45,7 @@ function clip(value: unknown, full: boolean): unknown {
   return `${text.slice(0, PREVIEW_CHARS)}… (+${text.length - PREVIEW_CHARS} chars)`;
 }
 
+/** Logs one agent action as a JSON line, clipped unless AGENT_LOG=full. Never throws. */
 export function logAgentAction(action: AgentAction): void {
   const m = mode();
   if (m === "off") return;

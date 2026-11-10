@@ -3,7 +3,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import type { Prisma, ResearchProject } from "@/generated/prisma/client";
 import type { ErrorType } from "@/generated/prisma/enums";
-import { anthropic, MODELS } from "@/lib/ai/anthropic";
+import { anthropic, MODEL_SETTINGS, MODELS } from "@/lib/ai/anthropic";
 import { prisma } from "@/lib/db/prisma";
 import { categorizeApiError, categorizeStopReason } from "@/lib/observability/errors";
 import { logStep } from "@/lib/observability/log";
@@ -83,10 +83,10 @@ export async function runCritic(
 
   const response = await anthropic.messages.parse({
     model: MODELS.critic,
-    max_tokens: 16_000, // thinking counts toward it
+    max_tokens: MODEL_SETTINGS.critic.maxTokens,
     system: CRITIC_SYSTEM_PROMPT,
     messages: [{ role: "user", content: parts.join("\n\n") }],
-    output_config: { effort: "medium", format: zodOutputFormat(CriticReviewSchema) },
+    output_config: { effort: MODEL_SETTINGS.critic.effort, format: zodOutputFormat(CriticReviewSchema) },
   });
 
   // A refusal has no JSON to parse (and Haiku has no server-side fallback)

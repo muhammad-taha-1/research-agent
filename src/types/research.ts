@@ -53,6 +53,14 @@ export interface RunSummaryView {
   stepCount: number;
 }
 
+/** GET /api/research/[id]/job: what's behind a project that says it's running. */
+export interface JobHealth {
+  redis: boolean; // false: none of the rest could be checked
+  job: string | null; // the project's unfinished job's BullMQ state ("active", "waiting", …), or null
+  workerAlive: boolean;
+  stuck: boolean; // running by its status, with no job: Resume continues it
+}
+
 /** The run debugger's data: one run with every step, and its project's other runs. */
 export interface RunDetail {
   project: { id: string; title: string; status: ProjectStatus };

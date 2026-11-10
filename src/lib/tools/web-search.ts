@@ -44,7 +44,7 @@ export const webSearchTool = defineTool({
   async execute({ query, max_results }) {
     const maxResults = Math.min(max_results ?? DEFAULT_RESULTS, MAX_RESULTS);
     try {
-      const response = await getClient().search(query, { maxResults, timeout: 20 });
+      const response = await withRateLimitBackoff(() => getClient().search(query, { maxResults, timeout: 20 }));
       const results = response.results.map((r) => ({
         title: r.title,
         url: r.url,
@@ -64,11 +64,40 @@ export const webSearchTool = defineTool({
 
 // @tavily/core throws plain Errors carrying the HTTP status or Tavily's detail
 // message, so the message text is all there is to classify on.
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+// 429: too many requests right now. 432/433: the plan's or pay-as-you-go quota is
+// used up, which waiting a few seconds won't change.
+const QUOTA_EXCEEDED = /\b(432|433)\b|usage limit|exceeds your plan|plan limit/i;
+const RATE_LIMITED = /\b429\b|rate limit|too many requests|excessive requests/i;
+const isTemporaryRateLimit = (message: string) => RATE_LIMITED.test(message) && !QUOTA_EXCEEDED.test(message);
+
+/** Waits between retries of a rate-limited search: 1s, 2s, then 4s. */
+export const SEARCH_BACKOFF_MS = [1000, 2000, 4000];
+
+/** Runs a search, retrying with exponential backoff while Tavily answers 429. */
+async function withRateLimitBackoff<T>(search: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await search();
+    } catch (error) {
+      const wait = SEARCH_BACKOFF_MS[attempt];
+      if (wait === undefined || !isTemporaryRateLimit(errorMessage(error))) throw error;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+  }
+}
+
 function searchFailure(error: unknown): ToolResult {
-  const message = error instanceof Error ? error.message : String(error);
-  if (/\b(429|432|433)\b|rate limit|usage limit|exceeds your plan/i.test(message)) {
+  const message = errorMessage(error);
+  if (QUOTA_EXCEEDED.test(message)) {
     return fail(
-      `Search rate limit or quota reached (${message}). Wait before searching again, or continue with the sources you already have.`,
+      `The search quota is used up (${message}). Web search is unavailable for now: continue with the sources you already have.`,
+      "RATE_LIMIT",
+    );
+  }
+  if (isTemporaryRateLimit(message)) {
+    return fail(
+      `Search is rate-limited, still after ${SEARCH_BACKOFF_MS.length} retries (${message}). Read pages you already found before searching again.`,
       "RATE_LIMIT",
     );
   }

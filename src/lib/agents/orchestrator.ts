@@ -1,8 +1,14 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { AgentRun, Prisma, ResearchProject } from "@/generated/prisma/client";
 import type { ProjectStatus } from "@/generated/prisma/enums";
-import { hasPendingRedirects, readControlSignals } from "@/lib/control/signals";
+import {
+  ControlUnavailableError,
+  hasPendingRedirects,
+  readControl,
+  readControlSignals,
+} from "@/lib/control/signals";
 import { prisma } from "@/lib/db/prisma";
+import { REDIS_UNAVAILABLE } from "@/lib/research/config";
 import { toCriticReviewView } from "@/lib/research/queries";
 import { createToolRegistry } from "@/lib/tools";
 import type { CriticReviewView } from "@/types/research";
@@ -31,7 +37,17 @@ const RUNNABLE: readonly ProjectStatus[] = ["QUEUED", "PLANNING", "RESEARCHING",
 const isFinished = (o: RunOutcome): o is "COMPLETED" | "LIMIT_REACHED" =>
   o === "COMPLETED" || o === "LIMIT_REACHED";
 
+/** Runs (or continues) a project's pipeline. A Redis outage pauses it instead of failing it. */
 export async function orchestrateResearch(projectId: string, emit: EmitFn, jobId?: string): Promise<void> {
+  try {
+    await runPipeline(projectId, emit, jobId);
+  } catch (error) {
+    if (!(error instanceof ControlUnavailableError)) throw error;
+    await pauseWithoutRedis(projectId, error, emit);
+  }
+}
+
+async function runPipeline(projectId: string, emit: EmitFn, jobId?: string): Promise<void> {
   const project = await prisma.researchProject.findUnique({ where: { id: projectId } });
   if (!project || !RUNNABLE.includes(project.status)) return;
 
@@ -194,7 +210,11 @@ async function resumeRun(run: AgentRun, jobId?: string): Promise<AgentState> {
     }),
     prisma.agentStep.count({ where: { runId: run.id, toolName: { not: null } } }),
   ]);
-  await prisma.agentRun.update({ where: { id: run.id }, data: { status: "RUNNING", jobId } });
+  // Clears what an automatic pause (Redis outage) recorded
+  await prisma.agentRun.update({
+    where: { id: run.id },
+    data: { status: "RUNNING", jobId, endReason: null, error: null, errorType: null },
+  });
 
   // Steps after the last checkpoint are redone: their rows stay on the timeline, and
   // numbering continues after them. Time spent paused or crashed doesn't count
@@ -294,7 +314,7 @@ async function writeRound(projectId: string, emit: EmitFn, jobId?: string): Prom
  * the orchestrator checks them itself. Returns true when the job should end here.
  */
 async function handleControlBetweenAgents(projectId: string, emit: EmitFn): Promise<boolean> {
-  const signals = await readControlSignals(projectId);
+  const signals = await readControl(() => readControlSignals(projectId));
   if (signals.stop) {
     await setStatus(projectId, "STOPPED", emit);
     return true;
@@ -305,6 +325,20 @@ async function handleControlBetweenAgents(projectId: string, emit: EmitFn): Prom
     return true;
   }
   return false;
+}
+
+/**
+ * Redis went away mid-pipeline. Its state is in Postgres (the loop checkpoints every
+ * turn), so pause: the researcher run that was going is marked PAUSED with the reason,
+ * and Resume continues it once Redis is back. Between agents there's no run to mark;
+ * the next job picks up the pipeline from the database as usual.
+ */
+async function pauseWithoutRedis(projectId: string, error: ControlUnavailableError, emit: EmitFn): Promise<void> {
+  await prisma.agentRun.updateMany({
+    where: { projectId, agentRole: "RESEARCHER", status: "RUNNING" },
+    data: { status: "PAUSED", endReason: REDIS_UNAVAILABLE, error: error.message, errorType: "NETWORK_ERROR" },
+  });
+  await setStatus(projectId, "PAUSED", emit); // the event is dropped while Redis is down; the page reads the database
 }
 
 async function setStatus(

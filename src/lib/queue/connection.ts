@@ -11,8 +11,20 @@ export type ResearchJob =
 export const QUEUE_NAME = "research";
 export const HEARTBEAT_KEY = "worker:heartbeat";
 
+const ERROR_LOG_EVERY_MS = 30_000;
+
+/** A new Redis connection to REDIS_URL, with a throttled error log. */
 export function createRedisConnection(options: RedisOptions = {}): Redis {
-  return new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", options);
+  const connection = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", options);
+  // Without a listener ioredis prints a stack trace on every reconnect attempt while
+  // Redis is down. Callers already handle failed commands; one line now and then is enough.
+  let lastLogged = 0;
+  connection.on("error", (error: Error) => {
+    if (Date.now() - lastLogged < ERROR_LOG_EVERY_MS) return;
+    lastLogged = Date.now();
+    console.warn(`Redis connection error (retrying): ${error.message || error.name}`);
+  });
+  return connection;
 }
 
 // One connection and queue per process, cached on globalThis like the Prisma client
